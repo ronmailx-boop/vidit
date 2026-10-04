@@ -1,0 +1,14 @@
+{
+  "name": "vidit",
+  "version": "1.0.0",
+  "description": "Vidit – VPlus Studio – חילוץ כתובות וידאו מכתובת של דף HTML",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "license": "UNLICENSED",
+  "private": true
+}

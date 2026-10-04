@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#7367f0">
+<title>Vidit</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Heebo:wght@400;500;700;800&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg:#f5f4fb; --surface:#fff; --surface-2:#efedfa; --text:#1d1a33; --muted:#6b6788; --line:#e0ddf2;
+  --primary:#7367f0; --primary-dark:#7c4ddb; --on-primary:#fff; --code-bg:#f0eefb; --danger:#c93a4a;
+  --stream:#7c4ddb; --file:#1f9d6b; --embed:#d9822b; --other:#6b6788;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg:#14121f; --surface:#1d1a2e; --surface-2:#272340; --text:#efedfb; --muted:#a29fc0; --line:#322e4e;
+    --code-bg:#15132a; --danger:#ff7b8a; --stream:#a58bff; --file:#4cd29b; --embed:#f2a65a; --other:#a29fc0;
+  }
+}
+* { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+html,body { margin:0; }
+body {
+  background:var(--bg); color:var(--text);
+  font-family:"Heebo",system-ui,-apple-system,"Segoe UI",Arial,sans-serif; font-size:16px; line-height:1.5;
+  padding-bottom:env(safe-area-inset-bottom,0px);
+}
+.wrap { max-width:640px; margin:0 auto; padding:0 16px 48px; }
+header {
+  background:linear-gradient(135deg,var(--primary),var(--primary-dark)); color:var(--on-primary);
+  margin:0 -16px 20px; padding:calc(26px + env(safe-area-inset-top,0px)) 20px 26px; border-radius:0 0 28px 28px;
+}
+header h1 { margin:0 0 6px; font-size:26px; font-weight:800; }
+header p { margin:0; font-size:15px; opacity:.92; max-width:46ch; }
+.panel { background:var(--surface); border:1px solid var(--line); border-radius:20px; padding:14px; }
+label.f { display:block; font-weight:700; font-size:15px; margin-bottom:8px; }
+input[type=url], input[type=password] {
+  width:100%; direction:ltr; text-align:left; border:1.5px solid var(--line); border-radius:14px;
+  background:var(--code-bg); color:var(--text); padding:12px; font:inherit; font-size:15px; min-height:48px;
+}
+input:focus-visible, button:focus-visible, a:focus-visible, summary:focus-visible { outline:3px solid var(--primary); outline-offset:2px; }
+.row { display:flex; gap:8px; flex-wrap:wrap; }
+.btn {
+  appearance:none; border:0; border-radius:12px; padding:10px 16px; font:inherit; font-weight:700; font-size:14px;
+  cursor:pointer; background:var(--surface-2); color:var(--text); min-height:44px; text-decoration:none;
+  display:inline-flex; align-items:center; justify-content:center;
+}
+.btn.primary { background:var(--primary); color:var(--on-primary); }
+.btn.ghost { background:transparent; border:1.5px solid var(--line); }
+.btn.sm { min-height:38px; padding:8px 12px; font-size:13px; }
+.btn:disabled { opacity:.6; cursor:progress; }
+.btn:active { transform:scale(.97); }
+.go { margin-top:12px; }
+.go .btn { flex:1; min-height:50px; font-size:16px; }
+.opts { margin-top:12px; display:flex; flex-direction:column; gap:10px; font-size:14px; color:var(--muted); }
+.opts label { display:flex; align-items:center; gap:10px; cursor:pointer; }
+.opts input[type=checkbox] { width:20px; height:20px; accent-color:var(--primary); margin:0; }
+details.adv { margin-top:12px; font-size:14px; }
+details.adv summary { cursor:pointer; color:var(--muted); font-weight:700; }
+details.adv input { margin-top:8px; }
+
+#out { margin-top:22px; }
+.page-card { display:flex; gap:12px; align-items:center; margin-bottom:12px; }
+.page-card img { width:84px; height:56px; object-fit:cover; border-radius:10px; background:var(--surface-2); flex:none; }
+.page-card .t { font-weight:800; font-size:15px; line-height:1.3; }
+.page-card .u { direction:ltr; text-align:left; font-size:12px; color:var(--muted); word-break:break-all; }
+.empty,.err,.note { border-radius:16px; padding:14px; font-size:15px; }
+.empty { text-align:center; color:var(--muted); border:1.5px dashed var(--line); }
+.err { background:color-mix(in srgb, var(--danger) 12%, var(--surface)); border:1px solid var(--danger); color:var(--text); }
+.note { background:var(--surface); border:1px solid var(--line); color:var(--muted); margin-bottom:10px; }
+.loading { text-align:center; color:var(--muted); padding:26px 12px; font-weight:700; }
+
+.result {
+  background:var(--surface); border:1px solid var(--line); border-inline-start:5px solid var(--other);
+  border-radius:16px; padding:12px 14px; margin-bottom:10px;
+}
+.result.stream { border-inline-start-color:var(--stream); }
+.result.file { border-inline-start-color:var(--file); }
+.result.embed { border-inline-start-color:var(--embed); }
+.rtop { display:flex; justify-content:space-between; gap:8px; margin-bottom:8px; }
+.kind { font-weight:800; font-size:14px; }
+.result.stream .kind { color:var(--stream); } .result.file .kind { color:var(--file); } .result.embed .kind { color:var(--embed); } .result.other .kind { color:var(--other); }
+.src { font-size:12px; color:var(--muted); }
+.url {
+  direction:ltr; text-align:left; font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace; font-size:13px;
+  background:var(--code-bg); border-radius:10px; padding:10px 12px; word-break:break-all; overflow-wrap:anywhere;
+  user-select:all; -webkit-user-select:all; margin-bottom:10px;
+}
+.result .row .btn { flex:1 1 0; }
+.toast {
+  position:fixed; left:50%; transform:translateX(-50%) translateY(20px); bottom:calc(24px + env(safe-area-inset-bottom,0px));
+  background:var(--text); color:var(--bg); padding:10px 18px; border-radius:999px; font-weight:700; font-size:14px;
+  opacity:0; pointer-events:none; transition:opacity .2s, transform .2s; z-index:10;
+}
+.toast.show { opacity:1; transform:translateX(-50%) translateY(0); }
+@media (prefers-reduced-motion: reduce) { .toast { transition:none; } .btn:active { transform:none; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Vidit</h1>
+    <p>הדבק כתובת של דף אינטרנט, והשרת יוריד אותו ויחלץ ממנו את כתובת הסרטון.</p>
+  </header>
+
+  <section class="panel">
+    <label class="f" for="url">כתובת הדף</label>
+    <input type="url" id="url" inputmode="url" placeholder="https://..." autocomplete="off" autocapitalize="off" spellcheck="false">
+    <div class="opts">
+      <label><input type="checkbox" id="depth" checked> חפש גם בתוך נגנים מוטמעים (iframe)</label>
+      <label><input type="checkbox" id="all"> הצג גם קישורים שלא זוהו כווידאו</label>
+    </div>
+    <details class="adv" id="adv">
+      <summary>הגדרות מתקדמות</summary>
+      <input type="url" id="base" placeholder="כתובת השרת, למשל https://vidit.onrender.com" autocomplete="off" autocapitalize="off" spellcheck="false">
+      <input type="password" id="key" placeholder="מפתח גישה (רק אם הוגדר ACCESS_KEY בשרת)" autocomplete="off">
+    </details>
+    <div class="row go">
+      <button class="btn ghost" id="paste" type="button">הדבק</button>
+      <button class="btn primary" id="run" type="button">חלץ סרטון</button>
+    </div>
+  </section>
+
+  <div id="out" aria-live="polite">
+    <div class="empty">הדבק כתובת ולחץ "חלץ סרטון".</div>
+  </div>
+</div>
+<div class="toast" id="toast" role="status"></div>
+
+<script>
+(function () {
+  var $ = function (id) { return document.getElementById(id); };
+  var KINDS = { stream:'סטרים (HLS / DASH)', file:'קובץ וידאו', embed:'נגן מוטמע', other:'קישור אחר' };
+  var busy = false;
+
+  function store(k, v) { try { if (v === undefined) return localStorage.getItem(k); localStorage.setItem(k, v); } catch (e) {} return null; }
+  $('key').value = store('vs_key') || '';
+  $('base').value = store('vs_base') || '';
+  if ($('key').value || $('base').value) $('adv').open = true;
+  // כשהממשק רץ על GitHub Pages אין שם שרת, אז חייבים כתובת שרת (Render)
+  var onPages = /\.github\.io$/i.test(location.hostname);
+
+  function toast(m) {
+    var t = $('toast'); t.textContent = m; t.classList.add('show');
+    clearTimeout(toast._t); toast._t = setTimeout(function () { t.classList.remove('show'); }, 1600);
+  }
+  function copy(text) {
+    function fb() {
+      var ta = document.createElement('textarea'); ta.value = text; ta.style.cssText = 'position:fixed;opacity:0';
+      document.body.appendChild(ta); ta.select(); var ok = false;
+      try { ok = document.execCommand('copy'); } catch (e) {}
+      document.body.removeChild(ta); toast(ok ? 'הועתק' : 'לא הצלחתי להעתיק');
+    }
+    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(function () { toast('הועתק'); }, fb); else fb();
+  }
+  function el(tag, cls, txt) { var e = document.createElement(tag); if (cls) e.className = cls; if (txt != null) e.textContent = txt; return e; }
+
+  function show(node) { var o = $('out'); o.innerHTML = ''; if (node) o.appendChild(node); return o; }
+
+  function renderResult(data) {
+    var out = show(null);
+    if (data.title || data.poster) {
+      var pc = el('div', 'page-card panel');
+      if (data.poster) { var img = el('img'); img.src = data.poster; img.alt = ''; img.referrerPolicy = 'no-referrer'; img.onerror = function () { img.remove(); }; pc.appendChild(img); }
+      var box = el('div');
+      box.appendChild(el('div', 't', data.title || 'ללא כותרת'));
+      box.appendChild(el('div', 'u', data.finalUrl));
+      pc.appendChild(box); out.appendChild(pc);
+    }
+    (data.notes || []).forEach(function (n) { out.appendChild(el('div', 'note', n)); });
+    if (!data.results.length) {
+      out.appendChild(el('div', 'empty', data.hiddenOthers ? 'לא נמצאו כתובות וידאו. סמן "הצג גם קישורים שלא זוהו כווידאו" כדי לראות את ' + data.hiddenOthers + ' הקישורים האחרים.' : 'לא נמצאו כתובות בדף.'));
+      return;
+    }
+    var h = el('h2', null, 'נמצאו ' + data.results.length + ' כתובות'); h.style.cssText = 'font-size:18px;font-weight:800;margin:0 2px 10px';
+    out.appendChild(h);
+    data.results.forEach(function (r) {
+      var c = el('div', 'result ' + r.kind);
+      var top = el('div', 'rtop'); top.appendChild(el('span', 'kind', KINDS[r.kind])); top.appendChild(el('span', 'src', r.source));
+      var u = el('div', 'url', r.url);
+      var row = el('div', 'row');
+      var cb = el('button', 'btn primary sm', 'העתק'); cb.type = 'button'; cb.addEventListener('click', function () { copy(r.url); });
+      var ob = el('a', 'btn sm', 'פתח'); ob.href = r.url; ob.target = '_blank'; ob.rel = 'noopener noreferrer';
+      row.appendChild(cb); row.appendChild(ob);
+      c.appendChild(top); c.appendChild(u); c.appendChild(row); out.appendChild(c);
+    });
+  }
+
+  async function run() {
+    if (busy) return;
+    var url = $('url').value.trim();
+    if (!url) { toast('הדבק קודם כתובת'); $('url').focus(); return; }
+    busy = true; $('run').disabled = true; $('run').textContent = 'סורק…';
+    show(el('div', 'loading', 'מוריד את הדף ומחפש וידאו…'));
+    var base = $('base').value.trim().replace(/\/+$/, '');
+    if (base && !/^https?:\/\//i.test(base)) base = 'https://' + base;
+    if (onPages && !base) {
+      $('adv').open = true; $('base').focus();
+      show(el('div', 'err', 'הממשק רץ על GitHub Pages ואין בו שרת. הכנס בהגדרות המתקדמות את כתובת השרת (Render).'));
+      busy = false; $('run').disabled = false; $('run').textContent = 'חלץ סרטון';
+      return;
+    }
+    store('vs_key', $('key').value);
+    store('vs_base', base);
+    try {
+      var qs = 'url=' + encodeURIComponent(url) + '&depth=' + ($('depth').checked ? 1 : 0) + '&all=' + ($('all').checked ? 1 : 0);
+      var res = await fetch((base ? base + '/' : '') + 'api/scrape?' + qs, { headers: $('key').value ? { 'x-key': $('key').value } : {} });
+      var data = await res.json();
+      if (!data.ok) {
+        if (res.status === 401) $('adv').open = true;
+        show(el('div', 'err', data.error || 'שגיאה לא ידועה'));
+      } else renderResult(data);
+    } catch (e) {
+      show(el('div', 'err', 'לא הצלחתי להתחבר לשרת. בדוק חיבור ונסה שוב.'));
+    }
+    busy = false; $('run').disabled = false; $('run').textContent = 'חלץ סרטון';
+  }
+
+  $('run').addEventListener('click', run);
+  $('url').addEventListener('keydown', function (e) { if (e.key === 'Enter') run(); });
+  $('paste').addEventListener('click', function () {
+    if (navigator.clipboard && navigator.clipboard.readText) {
+      navigator.clipboard.readText().then(function (t) { $('url').value = t.trim(); toast('הודבק'); }, function () { toast('אין הרשאה ללוח – הדבק ידנית'); $('url').focus(); });
+    } else { toast('הדבק ידנית'); $('url').focus(); }
+  });
+
+  // תמיכה בקישור ישיר: /?url=...
+  var q = new URLSearchParams(location.search).get('url');
+  if (q) { $('url').value = q; run(); }
+})();
+</script>
+</body>
+</html>

@@ -2,7 +2,7 @@
 
 ## Current Focus
 חיבור הממשק ל-`vidit.vplusstudio.app` דרך Cloudflare Workers. פרוס (5.10.2026): https://vidit.vplusstudio.app + https://vidit.ronmailx.workers.dev.
-הצעד הבא: בדיקה בטלפון; אם `CORS_ORIGIN` מוגדר ב-Render — להוסיף את הכתובת החדשה.
+אומת בטלפון — עובד. הצעד הבא: מסמכים משפטיים ב-`docs/legal/`.
 
 ## סטטוס
 - [x] שרת Node + ממשק עברי RTL (`server.js`, `index.html`)
@@ -15,7 +15,7 @@
 - [x] Secret `CLOUDFLARE_API_TOKEN` בריפו
 - [x] פריסה ל-Cloudflare הצליחה (custom domain נוצר)
 - [ ] אם `CORS_ORIGIN` מוגדר ב-Render: להוסיף `https://vidit.vplusstudio.app`
-- [ ] אימות בטלפון: https://vidit.vplusstudio.app
+- [x] אימות בטלפון: https://vidit.vplusstudio.app (עובד)
 - [ ] מסמכים משפטיים ב-`docs/legal/`
 
 ## החלטות

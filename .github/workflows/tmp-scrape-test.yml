@@ -1,0 +1,30 @@
+# TEMPORARY diagnostic – runs the scraper against a real page. Removed before merge.
+name: tmp scrape test
+on:
+  push:
+    branches: [ccr-36db6e32-rixxiw]
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - name: Scrape
+        env:
+          TARGET: https://www.mako.co.il/news-money/consumer/Article-690e882977d3891027.htm
+        run: |
+          node -e '
+            const { scrape, fetchPage } = require("./server.js");
+            (async () => {
+              const r = await scrape(process.env.TARGET, { depth: 1, all: true });
+              console.log("TITLE", r.title, "ads", r.adsCount, "notes", JSON.stringify(r.notes));
+              for (const x of r.results) console.log("RES", x.kind, x.role, x.adIndex || "", x.source, x.url);
+              const p = await fetchPage(process.env.TARGET);
+              require("fs").writeFileSync("page.html", p.body);
+            })().catch(e => { console.error(e); process.exit(1); });
+          '
+      - name: Interesting snippets
+        run: |
+          echo "size: $(wc -c < page.html)"
+          grep -oiE '.{0,160}(vcmid|videoChannelId|guid|playlist|vod|m3u8|mp4|ima3|vast|vmap|adtag|doubleclick|preroll|kaltura|player|vidId|video_id)[^<]{0,200}' page.html | sort -u | head -150

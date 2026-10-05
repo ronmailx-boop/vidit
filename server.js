@@ -909,6 +909,16 @@ async function scrape(target, { depth = 0, all = false } = {}) {
 }
 
 const INDEX_PATH = path.join(__dirname, 'index.html');
+// קבצים סטטיים שהממשק צריך (אייקונים ו-manifest) – רשימה סגורה, בלי גישה לשאר הקבצים בשרת
+const STATIC_FILES = {
+  '/manifest.webmanifest': 'application/manifest+json; charset=utf-8',
+  '/icons/icon.svg': 'image/svg+xml',
+  '/icons/icon-192.png': 'image/png',
+  '/icons/icon-512.png': 'image/png',
+  '/icons/maskable-512.png': 'image/png',
+  '/icons/apple-touch-icon.png': 'image/png',
+  '/icons/favicon-32.png': 'image/png',
+};
 
 const server = http.createServer(async (req, res) => {
   const u = new URL(req.url, 'http://x');
@@ -953,6 +963,23 @@ const server = http.createServer(async (req, res) => {
     const ip = String(req.headers['x-forwarded-for'] || req.socket.remoteAddress || '').split(',')[0].trim();
     if (rateLimited(ip)) return send(res, 429, { ok: false, error: 'יותר מדי בקשות, נסה שוב בעוד כמה דקות' });
     return handleDownload(req, res, u, ip);
+  }
+
+  if (Object.prototype.hasOwnProperty.call(STATIC_FILES, u.pathname)) {
+    fs.readFile(path.join(__dirname, u.pathname), (err, data) => {
+      if (err) {
+        res.writeHead(404);
+        return res.end();
+      }
+      res.writeHead(200, { 'Content-Type': STATIC_FILES[u.pathname], 'Cache-Control': 'public, max-age=86400' });
+      res.end(data);
+    });
+    return;
+  }
+
+  if (u.pathname === '/favicon.ico') {
+    res.writeHead(301, { Location: '/icons/favicon-32.png' });
+    return res.end();
   }
 
   if (u.pathname === '/' || u.pathname === '/index.html') {

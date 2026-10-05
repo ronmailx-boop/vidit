@@ -7,20 +7,24 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - name: VAST playlist follow
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - name: Scrape mako
+        env:
+          TARGET: https://www.mako.co.il/news-money/consumer/Article-690e882977d3891027.htm
         run: |
-          UA="Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Mobile Safari/537.36"
-          PAGE="https://www.mako.co.il/news-money/consumer/Article-690e882977d3891027.htm"
-          enc() { node -e 'console.log(encodeURIComponent(process.argv[1]))' "$1"; }
-          CP=$(enc "LEVEL4=News_money_consumer&MAKOPAGE=690e882977d38910VgnVCM100000700a10acRCRD")
-          IU="/242748299/mako/news/News_money/"
-          U="https://pubads.g.doubleclick.net/gampad/ads?slotname=$(enc $IU)&sz=4x4&ciu_szs=&url=$(enc $PAGE)&unviewed_position_start=1&output=xml_vast2&env=vp&gdfp_req=1&vid=1&cust_params=$CP&cmsid=4099&correlator=$RANDOM$RANDOM"
-          curl -s -A "$UA" -H "Referer: $PAGE" "$U" > pl.xml
-          cat pl.xml | sed 's/useragent=[^&]*//g' | cut -c1-400
-          echo; echo ======= FOLLOW
-          grep -oE '<!\[CDATA\[[^]]+' pl.xml | sed 's/<!\[CDATA\[//' | while read -r A; do
-            B=$(curl -s -A "$UA" -H "Referer: $PAGE" "$A")
-            echo "-- bytes=${#B} ads=$(echo "$B" | grep -o '<Ad ' | wc -l) media=$(echo "$B" | grep -o '<MediaFile' | wc -l) wrap=$(echo "$B" | grep -o 'VASTAdTagURI' | wc -l)"
-            echo "$B" | tr '\n' ' ' | grep -oE '<(AdTitle|Duration|VASTAdTagURI)>[^/]{0,300}' | head -6
-            echo "$B" | tr '\n' ' ' | grep -oE '<MediaFile[^>]*>\s*<!\[CDATA\[[^]]*' | head -4
-          done
+          node -e '
+            const { scrape } = require("./server.js");
+            (async () => {
+              const r = await scrape(process.env.TARGET, { depth: 1 });
+              console.log("TITLE", r.title, "| ads", r.adsCount, "| notes", JSON.stringify(r.notes));
+              for (const x of r.results) console.log("RES", x.kind, x.role, x.adIndex || "", x.positionLabel || "", x.duration || "", x.source, x.url.slice(0, 160));
+              for (const t of r.adTags) console.log("ADTAG", t.label, t.url.slice(0, 200));
+              require("fs").writeFileSync("tag.txt", (r.adTags[0] || {}).url || "");
+            })().catch(e => { console.error(e); process.exit(1); });
+          '
+      - name: CORS of ad request from the UI origin
+        run: |
+          T=$(cat tag.txt); [ -n "$T" ] || exit 0
+          curl -s -D - -o /dev/null -H "Origin: https://vidit.vplusstudio.app" -A "Mozilla/5.0 (Linux; Android 14) Chrome/124.0 Mobile" "$T" | grep -iE "^(HTTP|access-control|content-type)"

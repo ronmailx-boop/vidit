@@ -188,7 +188,7 @@ details.adv input { margin-top:8px; }
     }
     function card(r) {
       var ad = r.role === 'ad';
-      var label = ad && r.adIndex ? 'פרסומת ' + r.adIndex + (r.duration ? ' · ' + r.duration : '') + ' · ' + KINDS[r.kind] : KINDS[r.kind];
+      var label = ad && r.adIndex ? 'פרסומת ' + r.adIndex + (r.positionLabel ? ' · ' + r.positionLabel : '') + (r.duration ? ' · ' + r.duration : '') : KINDS[r.kind] + (r.duration ? ' · ' + r.duration : '');
       var c = el('div', 'result ' + r.kind + (ad ? ' ad' : ''));
       var top = el('div', 'rtop'); top.appendChild(el('span', 'kind', label)); top.appendChild(el('span', 'src', r.adTitle || r.source));
       var u = el('div', 'url', r.url);
@@ -200,6 +200,56 @@ details.adv input { margin-top:8px; }
     }
     if (main.length) { section('הסרטון', main.length > 1 ? main.length + ' כתובות' : ''); main.forEach(card); }
     if (ads.length) { section('פרסומות', ads.length + ' כתובות, לפי סדר ההופעה'); ads.forEach(card); }
+    if (data.adTags && data.adTags.length) {
+      var st = el('div', 'note', 'מחפש את הפרסומות מהמכשיר שלך…'); st.setAttribute('role', 'status'); out.appendChild(st);
+      var tags = data.adTags; data.adTags = [];
+      resolveAdsInBrowser(tags).then(function (found) {
+        if (!found.length) { st.textContent = 'שרת הפרסומות לא החזיר פרסומות כרגע (ייתכן שחוסם פרסומות פעיל, או שאין פרסומת לצפייה הזו).'; return; }
+        var n = ads.filter(function (r) { return r.adIndex; }).length;
+        found.forEach(function (a) { a.adIndex = ++n; data.results.push(a); });
+        renderResult(data);
+      });
+    }
+  }
+
+  // בקשות פרסום שהשרת (מחוץ לישראל) קיבל עליהן תשובה ריקה – מבקשים אותן מהמכשיר, כמו שהנגן עושה
+  function pickMedia(files) {
+    var best = null, score = -1;
+    files.forEach(function (f) {
+      var type = f.getAttribute('type') || '', api = f.getAttribute('apiFramework') || '', url = (f.textContent || '').trim();
+      if (!/^https?:\/\//i.test(url) || /javascript|vpaid|flash/i.test(type + ' ' + api)) return;
+      var sc = (/mp4/i.test(type) || /\.mp4/i.test(url) ? 10000 : 0) + Math.min(parseInt(f.getAttribute('width'), 10) || 0, 1280);
+      if (sc > score) { score = sc; best = url; }
+    });
+    return best;
+  }
+  async function getText(url) {
+    try { return await (await fetch(url, { credentials: 'include' })).text(); }
+    catch (e) { return await (await fetch(url)).text(); }
+  }
+  async function resolveAdsInBrowser(tags) {
+    var found = [], queue = tags.map(function (t) { return { url: t.url, label: t.label, depth: 0 }; }), count = 0;
+    while (queue.length && count < 6) {
+      var t = queue.shift(); if (t.depth > 3) continue; count++;
+      var doc;
+      try { doc = new DOMParser().parseFromString(await getText(t.url), 'text/xml'); } catch (e) { continue; }
+      var list = Array.prototype.slice.call(doc.getElementsByTagName('Ad')).sort(function (a, b) {
+        return (parseInt(a.getAttribute('sequence'), 10) || 0) - (parseInt(b.getAttribute('sequence'), 10) || 0);
+      });
+      list.forEach(function (ad) {
+        var wrap = ad.getElementsByTagName('VASTAdTagURI')[0];
+        if (wrap) { queue.push({ url: wrap.textContent.trim(), label: t.label, depth: t.depth + 1 }); return; }
+        var url = pickMedia(Array.prototype.slice.call(ad.getElementsByTagName('MediaFile')));
+        if (!url) return;
+        var dur = ad.getElementsByTagName('Duration')[0], title = ad.getElementsByTagName('AdTitle')[0];
+        found.push({
+          url: url, kind: /\.m3u8/i.test(url) ? 'stream' : 'file', role: 'ad', source: 'מהמכשיר: ' + new URL(t.url).hostname,
+          positionLabel: t.label, duration: dur ? dur.textContent.trim().replace(/\.\d+$/, '').replace(/^00:/, '') : '',
+          adTitle: title ? title.textContent.trim() : ''
+        });
+      });
+    }
+    return found;
   }
 
   async function run() {

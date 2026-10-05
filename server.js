@@ -199,6 +199,7 @@ const VIDEO_EXT = /\.(m3u8|mpd|mp4|webm|m4v|mov|mkv|ogv|f4m)(?=$|[?#])/i;
 const STREAM_EXT = /\.(m3u8|mpd|f4m)(?=$|[?#])/i;
 const NOT_VIDEO_EXT = /\.(jpe?g|png|gif|webp|svg|ico|css|js|mjs|json|woff2?|ttf|otf|eot|map|html?|xml|txt|avif|bmp)(?=$|[?#])/i;
 const VIDEO_HOSTS = /(youtube\.com|youtu\.be|youtube-nocookie\.com|vimeo\.com|dailymotion\.com|jwplatform\.com|jwpcdn\.com|brightcove|wistia|streamable|twitch\.tv|facebook\.com\/plugins\/video|akamaihd\.net|akamaized\.net|mako-vod|kaltura|mediadelivery|vimeocdn|cloudflarestream|mux\.com)/i;
+const TRACKING_HOSTS = /(googletagmanager\.com|google-analytics\.com|facebook\.com\/tr|doubleclick\.net|hotjar\.com|clarity\.ms)/i;
 const VIDEO_PATH = /(\/embed\/|\/player|\/vod\/|\/video|\/hls\/|\/dash\/|manifest|playlist|\/stream)/i;
 
 function normalize(t) {
@@ -283,7 +284,7 @@ function extractFromHtml(html, baseUrl) {
       const key = a[1].toLowerCase();
       const ok = name === 'meta' ? key === 'content' : /^(src|data-src|data-url|data-video-url|data-video|data-hls|data-mp4|data-stream)$/.test(key);
       if (!ok) continue;
-      if (name === 'iframe') add(a[2], 'iframe', 'embed');
+      if (name === 'iframe') add(a[2], 'iframe', TRACKING_HOSTS.test(a[2]) ? 'other' : 'embed');
       else if (name === 'meta') add(a[2], 'meta', undefined);
       else add(a[2], name, 'file');
     }
@@ -400,7 +401,7 @@ function parseVast(xml) {
     const body = m[2];
     const wrap = /<VASTAdTagURI[^>]*>([\s\S]*?)<\/VASTAdTagURI>/i.exec(body);
     if (wrap) {
-      next.push(xmlText(wrap[1]));
+      next.push({ url: xmlText(wrap[1]) });
       continue;
     }
     const files = [];
@@ -422,10 +423,37 @@ function parseVast(xml) {
       title: title ? xmlText(title[1]) : '',
     });
   }
-  const vmapRe = /<vmap:AdTagURI[^>]*>([\s\S]*?)<\/vmap:AdTagURI>/gi;
-  while ((m = vmapRe.exec(xml))) next.push(xmlText(m[1]));
+  // VMAP: <vmap:AdBreak timeOffset="start|end|hh:mm:ss"> עם AdTagURI
+  const vmapRe = /<vmap:AdBreak\b([^>]*)>([\s\S]*?)<\/vmap:AdBreak>/gi;
+  while ((m = vmapRe.exec(xml))) {
+    const off = xmlAttrs(m[1]).timeoffset || '';
+    const tag = /<vmap:AdTagURI[^>]*>([\s\S]*?)<\/vmap:AdTagURI>/i.exec(m[2]);
+    if (tag) next.push({ url: xmlText(tag[1]), ...breakPosition(off === 'start' ? 'preroll' : off === 'end' ? 'postroll' : 'midroll', off) });
+  }
+  // Google Ad Manager "Playlist" (חוקי פרסום): <Preroll>/<Midroll timeOffset>/<Postroll> עם כתובות בקשה
+  const plRe = /<(Preroll|Midroll|Postroll)\b([^>]*)>([\s\S]*?)<\/\1>/gi;
+  while ((m = plRe.exec(xml))) {
+    const pos = breakPosition(m[1].toLowerCase(), xmlAttrs(m[2]).timeoffset || '');
+    const cdRe = /<!\[CDATA\[([\s\S]*?)\]\]>/g;
+    let c;
+    while ((c = cdRe.exec(m[3]))) if (/^https?:\/\//i.test(c[1].trim())) next.push({ url: c[1].trim(), ...pos });
+  }
   ads.sort((a, b) => a.sequence - b.sequence);
   return { ads, next };
+}
+
+function hmsToSec(t) {
+  const p = String(t).split(':').map(Number);
+  return p.length === 3 && p.every((n) => !isNaN(n)) ? p[0] * 3600 + p[1] * 60 + p[2] : -1;
+}
+
+// מיקום הפרסומת: לפני / באמצע (שעה) / אחרי הסרטון
+function breakPosition(pos, offset) {
+  if (pos === 'midroll') {
+    const sec = hmsToSec(offset);
+    return { position: 'midroll', offsetSec: sec, label: 'באמצע' + (sec >= 0 ? ' (' + String(offset).replace(/^00:/, '').replace(/\.\d+$/, '') + ')' : '') };
+  }
+  return pos === 'postroll' ? { position: 'postroll', label: 'אחרי הסרטון' } : { position: 'preroll', label: 'לפני הסרטון' };
 }
 
 function fillMacros(url) {
@@ -433,29 +461,69 @@ function fillMacros(url) {
   return url.replace(/\[(timestamp|cachebuster|cache_buster|random|correlator)\]?|%%CACHEBUSTER%%|\{(?:random|cachebuster|timestamp)\}/gi, r);
 }
 
-// מוריד תגיות פרסום (עד MAX_AD_FETCHES) ומחזיר את קבצי הווידאו של הפרסומות לפי הסדר
-async function resolveAds(tags, referer, notes) {
-  const out = [];
-  const queue = tags.map((t) => ({ url: t, depth: 0 }));
+// מוריד תגיות פרסום (עד MAX_AD_FETCHES) ומחזיר את קבצי הווידאו של הפרסומות לפי הסדר.
+// emptyTags = בקשות שהשרת קיבל עליהן תשובה ריקה (פרסום שמכוון לישראל) – הדפדפן ינסה אותן בעצמו.
+async function resolveAds(tags, referer, notes, { maxOffsetSec = 0 } = {}) {
+  const ads = [];
+  const emptyTags = [];
+  const queue = tags.map((t) => (typeof t === 'string' ? { url: t, depth: 0 } : { ...t, depth: 0 }));
   const seen = new Set();
   let fetches = 0;
   while (queue.length && fetches < MAX_AD_FETCHES) {
-    const { url, depth } = queue.shift();
-    const target = fillMacros(url);
-    if (seen.has(target) || depth > 3) continue;
+    const item = queue.shift();
+    if (item.position === 'midroll' && maxOffsetSec > 0 && item.offsetSec > maxOffsetSec) continue;
+    const target = fillMacros(item.url);
+    if (seen.has(target) || item.depth > 3) continue;
     seen.add(target);
     fetches++;
+    const pos = { position: item.position || 'preroll', label: item.label || 'לפני הסרטון' };
     try {
       const page = await fetchPage(target, { referer });
-      if (!/<(VAST|vmap:VMAP)\b/i.test(page.body)) continue;
-      const { ads, next } = parseVast(page.body);
-      ads.forEach((a) => out.push({ ...a, tag: new URL(target).hostname }));
-      next.forEach((n) => queue.push({ url: n, depth: depth + 1 }));
+      if (!/<(VAST|vmap:VMAP|Playlist)\b/i.test(page.body)) continue;
+      const parsed = parseVast(page.body);
+      parsed.ads.forEach((a) => ads.push({ ...a, ...pos, tag: new URL(target).hostname }));
+      parsed.next.forEach((n) => queue.push({ ...pos, ...n, depth: item.depth + 1 }));
+      if (!parsed.ads.length && !parsed.next.length) emptyTags.push({ url: target, ...pos });
     } catch (e) {
       notes.push('לא הצלחתי לפתוח תגית פרסום מ-' + new URL(target).hostname + ' (' + e.message + ')');
     }
   }
-  return out;
+  return { ads, emptyTags };
+}
+
+/* ------------------------------------------------------------------ */
+/* mako (קשת 12): הנגן טוען את הסרטון והפרסומות ב-JavaScript,          */
+/* אז פונים ישירות ל-API של הנגן ובונים את בקשת הפרסומות כמו שהוא בונה */
+/* ------------------------------------------------------------------ */
+
+const MAKO_EMBED = /^https:\/\/www\.mako\.co\.il\/player-embed\/\?/i;
+const MAKO_AD_BASE =
+  'https://pubads.g.doubleclick.net/gampad/ads?sz=4x4&ciu_szs=&unviewed_position_start=1&output=xml_vast2&env=vp&gdfp_req=1&vid=1&cmsid=4099';
+
+async function makoVideo(embedUrl, pageUrl) {
+  const q = new URL(embedUrl).searchParams;
+  const vid = q.get('vid');
+  const cid = q.get('cid');
+  const gal = q.get('galleryCid') || '';
+  if (!vid || !cid) return null;
+  const api =
+    'https://www.mako.co.il/AjaxPage?jspName=playlist.jsp&vcmid=' + encodeURIComponent(vid) +
+    '&videoChannelId=' + encodeURIComponent(cid) + '&galleryChannelId=' + encodeURIComponent(gal) +
+    '&isGallery=false&consumer=web_html5&encryption=no';
+  const res = await fetchPage(api, { referer: pageUrl });
+  const data = JSON.parse(res.body);
+  const d = data.videoDetails || {};
+  const media = (data.media || []).filter((m) => m && /^https:\/\//i.test(m.url)).map((m) => ({ url: m.url, cdn: m.cdn || '' }));
+  let adTag = '';
+  const dfp = data.makoCatDFP;
+  if (String(data.adsEnabled) === 'true' && dfp && dfp.iu) {
+    const cp = new URLSearchParams();
+    for (const [k, v] of Object.entries(dfp.cust_params || {})) if (v && !/%[A-Z_]+%/.test(v)) cp.set(k, v);
+    if (gal) cp.set('MAKOPAGE', gal);
+    adTag = MAKO_AD_BASE + '&slotname=' + encodeURIComponent(dfp.iu) + '&url=' + encodeURIComponent(pageUrl) +
+      '&cust_params=' + encodeURIComponent(cp.toString()) + '&correlator=' + Date.now();
+  }
+  return { media, title: d.title || '', duration: d.duration || '', durationSec: Number(d.programDuration) || 0, adTag };
 }
 
 /* ------------------------------------------------------------------ */
@@ -507,20 +575,47 @@ async function scrape(target, { depth = 0, all = false } = {}) {
     results.sort((a, b) => rank[a.kind] - rank[b.kind]);
   }
 
+  // אתר מוכר: mako
+  let siteTitle = '';
+  let maxOffsetSec = 0;
+  const siteTags = [];
+  const makoEmbed = results.find((r) => MAKO_EMBED.test(r.url)) || (MAKO_EMBED.test(page.finalUrl) ? { url: page.finalUrl } : null);
+  if (makoEmbed) {
+    try {
+      const mk = await makoVideo(makoEmbed.url, page.finalUrl);
+      if (mk) {
+        mk.media.forEach((m) => {
+          if (seen.has(m.url)) return;
+          seen.add(m.url);
+          results.unshift({ url: m.url, kind: classify(m.url) === 'file' ? 'file' : 'stream', source: 'נגן mako' + (m.cdn ? ' (' + m.cdn + ')' : ''), role: 'main', duration: mk.duration });
+        });
+        siteTitle = mk.title;
+        maxOffsetSec = mk.durationSec;
+        if (mk.adTag) siteTags.push(mk.adTag);
+      }
+    } catch (e) {
+      notes.push('לא הצלחתי לקבל את פרטי הסרטון מהנגן של mako (' + e.message + ')');
+    }
+  }
+
   // פרסומות: כתובות שזוהו כפרסום, ותגיות VAST/VMAP שמפוענחות לקבצי הווידאו של הפרסומות
   results.forEach((r) => {
-    r.role = isAdUrl(r.url) ? 'ad' : 'main';
+    if (!r.role) r.role = isAdUrl(r.url) ? 'ad' : 'main';
   });
   const tags = results
     .filter((r) => r.role === 'ad' && r.kind !== 'stream' && r.kind !== 'file' && VAST_HINT.test(r.url) && !NOT_VIDEO_EXT.test(r.url.replace(/\.xml(?=$|[?#])/i, '')))
     .slice(0, MAX_AD_TAGS)
     .map((r) => r.url);
   const tagSet = new Set(tags);
+  tags.unshift(...siteTags);
+  let adTags = [];
   if (tags.length) {
-    for (const a of await resolveAds(tags, page.finalUrl, notes)) {
+    const resolved = await resolveAds(tags, page.finalUrl, notes, { maxOffsetSec });
+    adTags = resolved.emptyTags;
+    for (const a of resolved.ads) {
       if (seen.has(a.url)) continue;
       seen.add(a.url);
-      results.push({ url: a.url, kind: classify(a.url) === 'stream' ? 'stream' : 'file', source: 'תגית פרסום: ' + a.tag, role: 'ad', duration: a.duration, adTitle: a.title });
+      results.push({ url: a.url, kind: classify(a.url) === 'stream' ? 'stream' : 'file', source: 'תגית פרסום: ' + a.tag, role: 'ad', duration: a.duration, adTitle: a.title, position: a.position, positionLabel: a.label });
     }
   }
   // תגית הפרסום עצמה היא לא וידאו – מוצגת רק עם all=1
@@ -541,12 +636,13 @@ async function scrape(target, { depth = 0, all = false } = {}) {
     pageUrl: target,
     finalUrl: page.finalUrl,
     status: page.status,
-    title,
+    title: title || siteTitle,
     poster,
     bytes: page.bytes,
     results: all ? results : videos,
     hiddenOthers: all ? 0 : results.length - videos.length,
     adsCount: n,
+    adTags,
     notes,
   };
 }

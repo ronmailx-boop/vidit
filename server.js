@@ -393,15 +393,15 @@ function bestMediaFile(files) {
 
 // מפענח מסמך VAST / VMAP: פרסומות עם קבצי וידאו, ותגיות להמשך (Wrapper / VMAP)
 function parseVast(xml) {
-  const ads = [];
-  const next = [];
+  const items = [];
   const adRe = /<Ad\b([^>]*)>([\s\S]*?)<\/Ad>/gi;
   let m;
   while ((m = adRe.exec(xml))) {
     const body = m[2];
+    const sequence = parseInt(xmlAttrs(m[1]).sequence, 10) || 0;
     const wrap = /<VASTAdTagURI[^>]*>([\s\S]*?)<\/VASTAdTagURI>/i.exec(body);
     if (wrap) {
-      next.push({ url: xmlText(wrap[1]) });
+      items.push({ sequence, next: { url: xmlText(wrap[1]) } });
       continue;
     }
     const files = [];
@@ -416,19 +416,22 @@ function parseVast(xml) {
     if (!best) continue;
     const dur = /<Duration>([\s\S]*?)<\/Duration>/i.exec(body);
     const title = /<AdTitle>([\s\S]*?)<\/AdTitle>/i.exec(body);
-    ads.push({
-      url: best.url,
-      sequence: parseInt(xmlAttrs(m[1]).sequence, 10) || 0,
-      duration: dur ? xmlText(dur[1]).replace(/\.\d+$/, '').replace(/^00:/, '') : '',
-      title: title ? xmlText(title[1]) : '',
+    items.push({
+      sequence,
+      ad: {
+        url: best.url,
+        duration: dur ? xmlText(dur[1]).replace(/\.\d+$/, '').replace(/^00:/, '') : '',
+        title: title ? xmlText(title[1]) : '',
+      },
     });
   }
+  items.sort((a, b) => a.sequence - b.sequence);
   // VMAP: <vmap:AdBreak timeOffset="start|end|hh:mm:ss"> עם AdTagURI
   const vmapRe = /<vmap:AdBreak\b([^>]*)>([\s\S]*?)<\/vmap:AdBreak>/gi;
   while ((m = vmapRe.exec(xml))) {
     const off = xmlAttrs(m[1]).timeoffset || '';
     const tag = /<vmap:AdTagURI[^>]*>([\s\S]*?)<\/vmap:AdTagURI>/i.exec(m[2]);
-    if (tag) next.push({ url: xmlText(tag[1]), ...breakPosition(off === 'start' ? 'preroll' : off === 'end' ? 'postroll' : 'midroll', off) });
+    if (tag) items.push({ next: { url: xmlText(tag[1]), ...breakPosition(off === 'start' ? 'preroll' : off === 'end' ? 'postroll' : 'midroll', off) } });
   }
   // Google Ad Manager "Playlist" (חוקי פרסום): <Preroll>/<Midroll timeOffset>/<Postroll> עם כתובות בקשה
   const plRe = /<(Preroll|Midroll|Postroll)\b([^>]*)>([\s\S]*?)<\/\1>/gi;
@@ -436,10 +439,9 @@ function parseVast(xml) {
     const pos = breakPosition(m[1].toLowerCase(), xmlAttrs(m[2]).timeoffset || '');
     const cdRe = /<!\[CDATA\[([\s\S]*?)\]\]>/g;
     let c;
-    while ((c = cdRe.exec(m[3]))) if (/^https?:\/\//i.test(c[1].trim())) next.push({ url: c[1].trim(), ...pos });
+    while ((c = cdRe.exec(m[3]))) if (/^https?:\/\//i.test(c[1].trim())) items.push({ next: { url: c[1].trim(), ...pos } });
   }
-  ads.sort((a, b) => a.sequence - b.sequence);
-  return { ads, next };
+  return { items };
 }
 
 function hmsToSec(t) {
@@ -466,28 +468,33 @@ function fillMacros(url) {
 async function resolveAds(tags, referer, notes, { maxOffsetSec = 0 } = {}) {
   const ads = [];
   const emptyTags = [];
-  const queue = tags.map((t) => (typeof t === 'string' ? { url: t, depth: 0 } : { ...t, depth: 0 }));
   const seen = new Set();
   let fetches = 0;
-  while (queue.length && fetches < MAX_AD_FETCHES) {
-    const item = queue.shift();
-    if (item.position === 'midroll' && maxOffsetSec > 0 && item.offsetSec > maxOffsetSec) continue;
+  // לעומק (ולא לרוחב), כדי שפרסומת שמגיעה דרך Wrapper תישאר במקום שלה ברצף
+  async function visit(item, depth) {
+    if (fetches >= MAX_AD_FETCHES || depth > 3) return;
+    if (item.position === 'midroll' && maxOffsetSec > 0 && item.offsetSec > maxOffsetSec) return;
     const target = fillMacros(item.url);
-    if (seen.has(target) || item.depth > 3) continue;
+    if (seen.has(target)) return;
     seen.add(target);
     fetches++;
     const pos = { position: item.position || 'preroll', label: item.label || 'לפני הסרטון' };
+    let parsed;
     try {
       const page = await fetchPage(target, { referer });
-      if (!/<(VAST|vmap:VMAP|Playlist)\b/i.test(page.body)) continue;
-      const parsed = parseVast(page.body);
-      parsed.ads.forEach((a) => ads.push({ ...a, ...pos, tag: new URL(target).hostname }));
-      parsed.next.forEach((n) => queue.push({ ...pos, ...n, depth: item.depth + 1 }));
-      if (!parsed.ads.length && !parsed.next.length) emptyTags.push({ url: target, ...pos });
+      if (!/<(VAST|vmap:VMAP|Playlist)\b/i.test(page.body)) return;
+      parsed = parseVast(page.body);
     } catch (e) {
       notes.push('לא הצלחתי לפתוח תגית פרסום מ-' + new URL(target).hostname + ' (' + e.message + ')');
+      return;
+    }
+    if (!parsed.items.length) emptyTags.push({ url: target, ...pos });
+    for (const it of parsed.items) {
+      if (it.ad) ads.push({ ...it.ad, ...pos, tag: new URL(target).hostname });
+      else await visit({ ...pos, ...it.next }, depth + 1);
     }
   }
+  for (const t of tags) await visit(typeof t === 'string' ? { url: t } : t, 0);
   return { ads, emptyTags };
 }
 

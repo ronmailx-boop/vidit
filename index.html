@@ -228,27 +228,30 @@ details.adv input { margin-top:8px; }
     catch (e) { return await (await fetch(url)).text(); }
   }
   async function resolveAdsInBrowser(tags) {
-    var found = [], queue = tags.map(function (t) { return { url: t.url, label: t.label, depth: 0 }; }), count = 0;
-    while (queue.length && count < 6) {
-      var t = queue.shift(); if (t.depth > 3) continue; count++;
+    var found = [], count = 0;
+    // לעומק, כדי שפרסומת שמגיעה דרך Wrapper תישאר במקום שלה ברצף
+    async function visit(url, label, depth) {
+      if (count >= 6 || depth > 3) return;
+      count++;
       var doc;
-      try { doc = new DOMParser().parseFromString(await getText(t.url), 'text/xml'); } catch (e) { continue; }
+      try { doc = new DOMParser().parseFromString(await getText(url), 'text/xml'); } catch (e) { return; }
       var list = Array.prototype.slice.call(doc.getElementsByTagName('Ad')).sort(function (a, b) {
         return (parseInt(a.getAttribute('sequence'), 10) || 0) - (parseInt(b.getAttribute('sequence'), 10) || 0);
       });
-      list.forEach(function (ad) {
-        var wrap = ad.getElementsByTagName('VASTAdTagURI')[0];
-        if (wrap) { queue.push({ url: wrap.textContent.trim(), label: t.label, depth: t.depth + 1 }); return; }
-        var url = pickMedia(Array.prototype.slice.call(ad.getElementsByTagName('MediaFile')));
-        if (!url) return;
+      for (var i = 0; i < list.length; i++) {
+        var ad = list[i], wrap = ad.getElementsByTagName('VASTAdTagURI')[0];
+        if (wrap) { await visit(wrap.textContent.trim(), label, depth + 1); continue; }
+        var media = pickMedia(Array.prototype.slice.call(ad.getElementsByTagName('MediaFile')));
+        if (!media) continue;
         var dur = ad.getElementsByTagName('Duration')[0], title = ad.getElementsByTagName('AdTitle')[0];
         found.push({
-          url: url, kind: /\.m3u8/i.test(url) ? 'stream' : 'file', role: 'ad', source: 'מהמכשיר: ' + new URL(t.url).hostname,
-          positionLabel: t.label, duration: dur ? dur.textContent.trim().replace(/\.\d+$/, '').replace(/^00:/, '') : '',
+          url: media, kind: /\.m3u8/i.test(media) ? 'stream' : 'file', role: 'ad', source: 'מהמכשיר: ' + new URL(url).hostname,
+          positionLabel: label, duration: dur ? dur.textContent.trim().replace(/\.\d+$/, '').replace(/^00:/, '') : '',
           adTitle: title ? title.textContent.trim() : ''
         });
-      });
+      }
     }
+    for (var j = 0; j < tags.length; j++) await visit(tags[j].url, tags[j].label, 0);
     return found;
   }
 

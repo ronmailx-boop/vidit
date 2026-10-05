@@ -1,8 +1,8 @@
 # PROJECT_STATE – Vidit
 
 ## Current Focus
-חיבור הממשק ל-`vidit.vplusstudio.app` דרך Cloudflare Workers. הקבצים בבראנץ' `ccr-36db6e32-rixxiw`.
-הצעד הבא: מיזוג ל-`main`, הוספת ה-Secret `CLOUDFLARE_API_TOKEN`, ובדיקת לוג ה-workflow "Deploy to Cloudflare".
+חיבור הממשק ל-`vidit.vplusstudio.app` דרך Cloudflare Workers. פרוס (5.10.2026): https://vidit.vplusstudio.app + https://vidit.ronmailx.workers.dev.
+אומת בטלפון — עובד. הצעד הבא: מסמכים משפטיים ב-`docs/legal/`.
 
 ## סטטוס
 - [x] שרת Node + ממשק עברי RTL (`server.js`, `index.html`)
@@ -11,10 +11,11 @@
 - [x] קבצי Cloudflare: `wrangler.jsonc`, `.assetsignore`, `.github/workflows/deploy-cloudflare.yml`
 - [x] הממשק בכתובת סטטית פונה אוטומטית לשרת ב-Render
 - [x] `CORS_ORIGIN` תומך בכמה כתובות מופרדות בפסיק
-- [ ] מיזוג ל-main
-- [ ] Secret `CLOUDFLARE_API_TOKEN` בריפו (רק המשתמש)
+- [x] מיזוג ל-main (PR #1)
+- [x] Secret `CLOUDFLARE_API_TOKEN` בריפו
+- [x] פריסה ל-Cloudflare הצליחה (custom domain נוצר)
 - [ ] אם `CORS_ORIGIN` מוגדר ב-Render: להוסיף `https://vidit.vplusstudio.app`
-- [ ] אימות בטלפון: https://vidit.vplusstudio.app
+- [x] אימות בטלפון: https://vidit.vplusstudio.app (עובד)
 - [ ] מסמכים משפטיים ב-`docs/legal/`
 
 ## החלטות

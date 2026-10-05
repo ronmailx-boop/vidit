@@ -114,7 +114,7 @@ details.adv input { margin-top:8px; }
     </div>
     <details class="adv" id="adv">
       <summary>הגדרות מתקדמות</summary>
-      <input type="url" id="base" placeholder="כתובת שרת אחר (ריק = ברירת המחדל)" autocomplete="off" autocapitalize="off" spellcheck="false">
+      <input type="url" id="base" placeholder="כתובת השרת" autocomplete="off" autocapitalize="off" spellcheck="false">
       <input type="password" id="key" placeholder="מפתח גישה (רק אם הוגדר ACCESS_KEY בשרת)" autocomplete="off">
     </details>
     <div class="row go">
@@ -136,12 +136,12 @@ details.adv input { margin-top:8px; }
   var busy = false;
 
   function store(k, v) { try { if (v === undefined) return localStorage.getItem(k); localStorage.setItem(k, v); } catch (e) {} return null; }
+  // כתובת השרת הקבועה ב-Render. בהרצה מקומית ריק = אותו שרת שמגיש את הדף
+  var isLocal = /^(localhost|127\.|\[::1\])/.test(location.hostname);
+  var DEFAULT_SERVER = isLocal ? '' : 'https://vidit-927k.onrender.com';
   $('key').value = store('vs_key') || '';
-  $('base').value = store('vs_base') || '';
-  if ($('key').value || $('base').value) $('adv').open = true;
-  // הממשק מוגש גם כקובץ סטטי (Cloudflare / GitHub Pages) בלי שרת, ואז הבקשות הולכות לשרת ב-Render
-  var DEFAULT_SERVER = 'https://vidit-927k.onrender.com';
-  var isStatic = /(\.github\.io|\.vplusstudio\.app|\.workers\.dev)$/i.test(location.hostname);
+  $('base').value = store('vs_base') || DEFAULT_SERVER;
+  if ($('key').value || $('base').value !== DEFAULT_SERVER) $('adv').open = true;
 
   function toast(m) {
     var t = $('toast'); t.textContent = m; t.classList.add('show');
@@ -197,9 +197,9 @@ details.adv input { margin-top:8px; }
     show(el('div', 'loading', 'מוריד את הדף ומחפש וידאו…'));
     var base = $('base').value.trim().replace(/\/+$/, '');
     if (base && !/^https?:\/\//i.test(base)) base = 'https://' + base;
+    if (!base) { base = DEFAULT_SERVER; $('base').value = base; }
     store('vs_key', $('key').value);
-    store('vs_base', base);
-    if (isStatic && !base) base = DEFAULT_SERVER;
+    store('vs_base', base === DEFAULT_SERVER ? '' : base);
     try {
       var qs = 'url=' + encodeURIComponent(url) + '&depth=' + ($('depth').checked ? 1 : 0) + '&all=' + ($('all').checked ? 1 : 0);
       var res = await fetch((base ? base + '/' : '') + 'api/scrape?' + qs, { headers: $('key').value ? { 'x-key': $('key').value } : {} });

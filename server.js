@@ -9,7 +9,7 @@
  *      &all=1                → כולל גם קישורים שלא זוהו כווידאו
  * GET /health                → בדיקת חיים
  *
- * משתני סביבה: PORT, ACCESS_KEY (אופציונלי), CORS_ORIGIN (ברירת מחדל *), ALLOW_PRIVATE=1 (לבדיקות מקומיות בלבד)
+ * משתני סביבה: PORT, ACCESS_KEY (אופציונלי), CORS_ORIGIN (ברירת מחדל *, אפשר כמה כתובות מופרדות בפסיק), ALLOW_PRIVATE=1 (לבדיקות מקומיות בלבד)
  */
 
 const http = require('http');
@@ -22,7 +22,14 @@ const zlib = require('zlib');
 
 const PORT = process.env.PORT || 3000;
 const ACCESS_KEY = process.env.ACCESS_KEY || '';
-const CORS_ORIGIN = process.env.CORS_ORIGIN || '*';
+const CORS_ORIGINS = (process.env.CORS_ORIGIN || '*').split(',').map((o) => o.trim().replace(/\/+$/, '')).filter(Boolean);
+
+// מחזיר את ה-Origin המותר לבקשה (תומך בכמה כתובות, למשל Cloudflare + GitHub Pages)
+function corsOrigin(req) {
+  if (CORS_ORIGINS.includes('*')) return '*';
+  const origin = req.headers.origin || '';
+  return CORS_ORIGINS.includes(origin) ? origin : CORS_ORIGINS[0];
+}
 const ALLOW_PRIVATE = process.env.ALLOW_PRIVATE === '1';
 
 const MAX_BYTES = 3 * 1024 * 1024; // 3MB לדף
@@ -359,7 +366,6 @@ function send(res, code, obj) {
   const body = JSON.stringify(obj);
   res.writeHead(code, {
     'Content-Type': 'application/json; charset=utf-8',
-    'Access-Control-Allow-Origin': CORS_ORIGIN,
     'Access-Control-Allow-Headers': 'x-key',
     'Cache-Control': 'no-store',
   });
@@ -413,10 +419,11 @@ const INDEX_PATH = path.join(__dirname, 'index.html');
 
 const server = http.createServer(async (req, res) => {
   const u = new URL(req.url, 'http://x');
+  res.setHeader('Access-Control-Allow-Origin', corsOrigin(req));
+  res.setHeader('Vary', 'Origin');
 
   if (req.method === 'OPTIONS') {
     res.writeHead(204, {
-      'Access-Control-Allow-Origin': CORS_ORIGIN,
       'Access-Control-Allow-Headers': 'x-key',
       'Access-Control-Allow-Methods': 'GET, OPTIONS',
     });

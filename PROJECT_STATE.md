@@ -21,8 +21,6 @@
 - [x] אימות בטלפון: https://vidit.vplusstudio.app (עובד)
 - [ ] מסמכים משפטיים ב-`docs/legal/`
 
-## בעיות פתוחות
-- Render לא פורס אוטומטית מ-main למרות autoDeploy=yes: Render לא קיבל אף אירוע push מ-GitHub (אין גם commit_ignored) – ה-GitHub App של Render לא מחובר לריפו. התיקון אצל המשתמש: GitHub → Settings → Applications → Render → Configure → להוסיף את vidit. עד שיתוקן: Manual Deploy / trigger_deploy אחרי כל מיזוג שמשנה את `server.js`.
-
 ## החלטות
+- Render מחובר ל-GitHub דרך ה-GitHub App (חובר 5.10.2026) – פריסה אוטומטית מכל קומיט ל-main. לפני כן השירות הוגדר כ-Public Git Repository ולא קיבל אירועי push.
 - Cloudflare מגיש רק את `index.html`; השרת נשאר ב-Render (Cloudflare Workers סטטי לא מריץ Node).

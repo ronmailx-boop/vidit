@@ -16,7 +16,7 @@
 - [x] כפתור הורדה: קובץ בפורמט המקורי, סטרים HLS מומר ל-MP4 בשרת (mux.js) – נבדק מול mako (5:41, 38MB, H.264+AAC)
 - [x] אימות הורדה בטלפון (mako: הקובץ נשמר ומתנגן)
 - [x] אייקון (וריאציה 1: נגן וקישור) – `icons/` + `manifest.webmanifest` + favicon/apple-touch-icon; Render מגיש אותם מרשימה סגורה
-- [x] אייקון ב-apps.vplusstudio.app (ריפו my-site): נשלף אוטומטית מה-manifest ב-GitHub Pages; האריח מפנה ל-vidit.vplusstudio.app
+- [x] אייקון ב-apps.vplusstudio.app (ריפו my-site, אומת בטלפון): נשלף אוטומטית מה-manifest ב-GitHub Pages; האריח מפנה ל-vidit.vplusstudio.app
 - [x] `CORS_ORIGIN` תומך בכמה כתובות מופרדות בפסיק
 - [x] מיזוג ל-main (PR #1)
 - [x] Secret `CLOUDFLARE_API_TOKEN` בריפו

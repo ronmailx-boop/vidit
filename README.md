@@ -15,11 +15,20 @@
 4. מומלץ: Environment ← `ACCESS_KEY` עם סיסמה כלשהי, כדי שרק אתה תוכל להשתמש בשרת.
 5. אחרי הפריסה פותחים את הכתובת של השירות ומדביקים קישור של דף.
 
-## ממשק על GitHub Pages
-GitHub Pages מגיש רק קבצים סטטיים, ולכן `server.js` חייב לרוץ ב-Render.
-אם `index.html` מוגש מ-GitHub Pages: פותחים "הגדרות מתקדמות" וממלאים את כתובת השרת
-(למשל `https://vidit.onrender.com`). הכתובת נשמרת בדפדפן.
-ב-Render מגדירים `CORS_ORIGIN` לכתובת של Pages (למשל `https://ronmailx-boop.github.io`).
+## כתובות
+- **https://vidit.vplusstudio.app** – הממשק (Cloudflare Workers, קבצים סטטיים בלבד).
+- **https://vidit-927k.onrender.com** – השרת (Render). מגיש גם את הממשק וגם את ה-API.
+- https://ronmailx-boop.github.io/vidit/ – עותק של הממשק ב-GitHub Pages.
+
+Cloudflare ו-GitHub Pages מגישים רק את `index.html`. כשהממשק רץ שם, הוא שולח את הבקשות
+לשרת ב-Render אוטומטית (אפשר לשנות כתובת שרת ב"הגדרות מתקדמות").
+אם הוגדר ב-Render `CORS_ORIGIN`, צריך לכלול בו את כל הכתובות, מופרדות בפסיק:
+`https://vidit.vplusstudio.app,https://ronmailx-boop.github.io`
+
+## פריסה ל-Cloudflare
+כל push ל-`main` מפעיל את `.github/workflows/deploy-cloudflare.yml` (wrangler).
+נדרש Secret בריפו בשם `CLOUDFLARE_API_TOKEN` (תבנית Edit Cloudflare Workers, zone `vplusstudio.app`).
+בלי ה-Secret הפריסה מדלגת. `.assetsignore` קובע שרק הממשק עולה (בלי `server.js`).
 
 ## שימוש כ-API (מאפליקציות אחרות)
 `GET /api/scrape?url=<כתובת הדף>&depth=1`

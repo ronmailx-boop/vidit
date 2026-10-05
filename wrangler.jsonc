@@ -1,0 +1,9 @@
+// Cloudflare Workers: serves the app as static assets (no Worker script).
+// The scraping server (server.js) stays on Render; the UI calls it from the browser.
+{
+  "name": "vidit",
+  "compatibility_date": "2026-10-05",
+  "assets": { "directory": "." },
+  "workers_dev": true,
+  "routes": [{ "pattern": "vidit.vplusstudio.app", "custom_domain": true }]
+}

@@ -1,0 +1,17 @@
+.git
+.github
+.claude
+.wrangler
+.env
+.env.*
+node_modules
+tests
+server.js
+package.json
+package-lock.json
+wrangler.jsonc
+.assetsignore
+.gitignore
+CLAUDE.md
+PROJECT_STATE.md
+README.md

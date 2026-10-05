@@ -114,7 +114,7 @@ details.adv input { margin-top:8px; }
     </div>
     <details class="adv" id="adv">
       <summary>הגדרות מתקדמות</summary>
-      <input type="url" id="base" placeholder="כתובת השרת, למשל https://vidit.onrender.com" autocomplete="off" autocapitalize="off" spellcheck="false">
+      <input type="url" id="base" placeholder="כתובת שרת אחר (ריק = ברירת המחדל)" autocomplete="off" autocapitalize="off" spellcheck="false">
       <input type="password" id="key" placeholder="מפתח גישה (רק אם הוגדר ACCESS_KEY בשרת)" autocomplete="off">
     </details>
     <div class="row go">
@@ -139,8 +139,9 @@ details.adv input { margin-top:8px; }
   $('key').value = store('vs_key') || '';
   $('base').value = store('vs_base') || '';
   if ($('key').value || $('base').value) $('adv').open = true;
-  // כשהממשק רץ על GitHub Pages אין שם שרת, אז חייבים כתובת שרת (Render)
-  var onPages = /\.github\.io$/i.test(location.hostname);
+  // הממשק מוגש גם כקובץ סטטי (Cloudflare / GitHub Pages) בלי שרת, ואז הבקשות הולכות לשרת ב-Render
+  var DEFAULT_SERVER = 'https://vidit-927k.onrender.com';
+  var isStatic = /(\.github\.io|\.vplusstudio\.app|\.workers\.dev)$/i.test(location.hostname);
 
   function toast(m) {
     var t = $('toast'); t.textContent = m; t.classList.add('show');
@@ -196,14 +197,9 @@ details.adv input { margin-top:8px; }
     show(el('div', 'loading', 'מוריד את הדף ומחפש וידאו…'));
     var base = $('base').value.trim().replace(/\/+$/, '');
     if (base && !/^https?:\/\//i.test(base)) base = 'https://' + base;
-    if (onPages && !base) {
-      $('adv').open = true; $('base').focus();
-      show(el('div', 'err', 'הממשק רץ על GitHub Pages ואין בו שרת. הכנס בהגדרות המתקדמות את כתובת השרת (Render).'));
-      busy = false; $('run').disabled = false; $('run').textContent = 'חלץ סרטון';
-      return;
-    }
     store('vs_key', $('key').value);
     store('vs_base', base);
+    if (isStatic && !base) base = DEFAULT_SERVER;
     try {
       var qs = 'url=' + encodeURIComponent(url) + '&depth=' + ($('depth').checked ? 1 : 0) + '&all=' + ($('all').checked ? 1 : 0);
       var res = await fetch((base ? base + '/' : '') + 'api/scrape?' + qs, { headers: $('key').value ? { 'x-key': $('key').value } : {} });

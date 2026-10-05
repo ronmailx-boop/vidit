@@ -20,5 +20,8 @@
 - [x] אימות בטלפון: https://vidit.vplusstudio.app (עובד)
 - [ ] מסמכים משפטיים ב-`docs/legal/`
 
+## בעיות פתוחות
+- Render לא פורס אוטומטית מ-main למרות autoDeploy=yes (כנראה ה-webhook של GitHub לא מחובר). עד שיתוקן: Manual Deploy / trigger_deploy אחרי כל מיזוג שמשנה את `server.js`.
+
 ## החלטות
 - Cloudflare מגיש רק את `index.html`; השרת נשאר ב-Render (Cloudflare Workers סטטי לא מריץ Node).

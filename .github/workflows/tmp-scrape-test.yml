@@ -1,4 +1,4 @@
-# TEMPORARY diagnostic – runs the scraper against a real page. Removed before merge.
+# TEMPORARY diagnostic – removed before merge.
 name: tmp scrape test
 on:
   push:
@@ -7,24 +7,41 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with: { node-version: 22 }
-      - name: Scrape
+      - name: Playlist API
+        run: |
+          UA="Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Mobile Safari/537.36"
+          U="https://www.mako.co.il/AjaxPage?jspName=playlist.jsp&vcmid=1ac388ae74d38910VgnVCM200000650a10acRCRD&videoChannelId=fdccb2eb226bb110VgnVCM100000290c10acRCRD&galleryChannelId=690e882977d38910VgnVCM100000700a10acRCRD&isGallery=false&consumer=web_html5&encryption=no"
+          curl -s -A "$UA" "$U" | head -c 3000; echo
+          curl -s -A "$UA" "https://www.mako.co.il/player-embed/?vid=1ac388ae74d38910VgnVCM200000650a10acRCRD&cid=fdccb2eb226bb110VgnVCM100000290c10acRCRD&galleryCid=690e882977d38910VgnVCM100000700a10acRCRD" | grep -oiE '.{0,100}(ajax|playlist|vast|ima|adtag|m3u8|mp4|doubleclick)[^<]{0,150}' | head -40
+      - name: Browser network capture
+        run: |
+          mkdir b && cd b && npm init -y >/dev/null && npm i playwright@1 >/dev/null 2>&1 && npx playwright install --with-deps chromium >/dev/null 2>&1
+          cat > cap.mjs <<'JS'
+          import { chromium, devices } from 'playwright';
+          const b = await chromium.launch();
+          const ctx = await b.newContext({ ...devices['Pixel 7'], locale: 'he-IL' });
+          const p = await ctx.newPage();
+          const seen = new Set();
+          const log = (tag, u) => { const k = tag + u.slice(0, 300); if (seen.has(k)) return; seen.add(k); console.log(tag, u.slice(0, 400)); };
+          p.on('request', r => {
+            const u = r.url();
+            if (/\.(m3u8|mpd|mp4|webm)(\?|$)|vast|vmap|gampad\/ads|pubads|imasdk|playlist|AjaxPage|entitlement|ticket|\.ts(\?|$)|\.m4s/i.test(u)) log('REQ ' + r.resourceType(), u);
+          });
+          p.on('response', async r => {
+            const u = r.url();
+            if (/gampad\/ads|vast|vmap/i.test(u)) { try { const t = await r.text(); console.log('VASTBODY', u.slice(0,120), t.slice(0, 1500).replace(/\s+/g,' ')); } catch (e) {} }
+            if (/AjaxPage.*playlist|entitlement/i.test(u)) { try { console.log('API', u.slice(0,200), (await r.text()).slice(0, 1500)); } catch (e) {} }
+          });
+          await p.goto(process.env.TARGET, { waitUntil: 'domcontentloaded', timeout: 60000 });
+          await p.waitForTimeout(8000);
+          for (const sel of ['[id^="player_"]', 'video', '.vjs-big-play-button', 'button[aria-label*="Play"]', '[class*="play"]']) {
+            try { await p.locator(sel).first().click({ timeout: 3000 }); console.log('CLICKED', sel); break; } catch (e) {}
+          }
+          await p.waitForTimeout(40000);
+          await b.close();
+          JS
+          node cap.mjs
         env:
           TARGET: https://www.mako.co.il/news-money/consumer/Article-690e882977d3891027.htm
-        run: |
-          node -e '
-            const { scrape, fetchPage } = require("./server.js");
-            (async () => {
-              const r = await scrape(process.env.TARGET, { depth: 1, all: true });
-              console.log("TITLE", r.title, "ads", r.adsCount, "notes", JSON.stringify(r.notes));
-              for (const x of r.results) console.log("RES", x.kind, x.role, x.adIndex || "", x.source, x.url);
-              const p = await fetchPage(process.env.TARGET);
-              require("fs").writeFileSync("page.html", p.body);
-            })().catch(e => { console.error(e); process.exit(1); });
-          '
-      - name: Interesting snippets
-        run: |
-          echo "size: $(wc -c < page.html)"
-          grep -oiE '.{0,160}(vcmid|videoChannelId|guid|playlist|vod|m3u8|mp4|ima3|vast|vmap|adtag|doubleclick|preroll|kaltura|player|vidId|video_id)[^<]{0,200}' page.html | sort -u | head -150

@@ -1,12 +1,13 @@
 'use strict';
 /**
  * Vidit — VPlus Studio
- * שרת Node בלי תלויות: מקבל כתובת של דף HTML, מוריד אותו, ומחזיר את כתובות הווידאו שבו.
+ * שרת Node (תלות אחת: mux.js להמרת סטרים ל-MP4): מקבל כתובת של דף HTML, מוריד אותו, ומחזיר את כתובות הווידאו שבו.
  *
  * GET /                      → ממשק המשתמש (index.html)
  * GET /api/scrape?url=...    → JSON עם הכתובות שנמצאו
  *      &depth=1              → חיפוש גם בתוך נגני iframe (עד 3)
  *      &all=1                → כולל גם קישורים שלא זוהו כווידאו
+ * GET /api/download?url=...  → הורדת הסרטון כקובץ (סטרים HLS מומר ל-MP4)
  * GET /health                → בדיקת חיים
  *
  * משתני סביבה: PORT, ACCESS_KEY (אופציונלי), CORS_ORIGIN (ברירת מחדל *, אפשר כמה כתובות מופרדות בפסיק), ALLOW_PRIVATE=1 (לבדיקות מקומיות בלבד)
@@ -19,6 +20,7 @@ const path = require('path');
 const dns = require('dns');
 const net = require('net');
 const zlib = require('zlib');
+const muxjs = require('mux.js');
 
 const PORT = process.env.PORT || 3000;
 const ACCESS_KEY = process.env.ACCESS_KEY || '';
@@ -534,6 +536,258 @@ async function makoVideo(embedUrl, pageUrl) {
 }
 
 /* ------------------------------------------------------------------ */
+/* הורדה: קובץ וידאו עובר כמו שהוא, וסטרים HLS מחובר לקובץ MP4 אחד   */
+/* ------------------------------------------------------------------ */
+
+const MAX_SEGMENT_BYTES = 50 * 1024 * 1024;
+const MAX_SEGMENTS = 4000;
+const MAX_DOWNLOADS_PER_IP = 2;
+const MAX_DOWNLOADS = 6;
+const downloads = new Map();
+let downloadsTotal = 0;
+
+// פותח חיבור עם אותן הגנות כמו fetchPage (הפניות, רשת פנימית, פורטים) ומחזיר את התגובה כזרם
+function openUrl(urlStr, opts = {}, hops = 0) {
+  return new Promise((resolve, reject) => {
+    let u;
+    try {
+      u = new URL(urlStr);
+    } catch (e) {
+      return reject(new Error('כתובת לא תקינה'));
+    }
+    if (u.protocol !== 'http:' && u.protocol !== 'https:') return reject(new Error('נתמכות רק כתובות http/https'));
+    if (!ALLOW_PRIVATE && u.port && u.port !== '80' && u.port !== '443') return reject(new Error('פורט לא מורשה'));
+    if (net.isIP(u.hostname.replace(/^\[|\]$/g, '')) && isPrivateIp(u.hostname.replace(/^\[|\]$/g, ''))) {
+      return reject(new Error('הכתובת מצביעה על רשת פנימית – חסום'));
+    }
+    const lib = u.protocol === 'https:' ? https : http;
+    const headers = { 'User-Agent': UA, Accept: '*/*', 'Accept-Encoding': 'identity' };
+    if (opts.referer) headers.Referer = opts.referer;
+    const req = lib.request(u, { method: 'GET', headers, lookup: safeLookup, timeout: TIMEOUT_MS }, (res) => {
+      if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+        res.resume();
+        if (hops >= MAX_REDIRECTS) return reject(new Error('יותר מדי הפניות'));
+        let next;
+        try {
+          next = new URL(res.headers.location, u).toString();
+        } catch (e) {
+          return reject(new Error('הפניה לא תקינה'));
+        }
+        return openUrl(next, opts, hops + 1).then(resolve, reject);
+      }
+      if (res.statusCode >= 400) {
+        res.resume();
+        return reject(new Error('השרת של הסרטון החזיר שגיאה ' + res.statusCode));
+      }
+      resolve({ res, req, finalUrl: u.toString() });
+    });
+    req.on('timeout', () => req.destroy(new Error('השרת של הסרטון לא הגיב בזמן')));
+    req.on('error', reject);
+    req.end();
+  });
+}
+
+async function fetchBuffer(url, opts) {
+  const { res, req, finalUrl } = await openUrl(url, opts);
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    let size = 0;
+    res.on('data', (c) => {
+      size += c.length;
+      if (size > MAX_SEGMENT_BYTES) {
+        req.destroy();
+        return reject(new Error('קטע וידאו גדול מדי'));
+      }
+      chunks.push(c);
+    });
+    res.on('end', () => resolve({ buf: Buffer.concat(chunks), finalUrl }));
+    res.on('error', reject);
+  });
+}
+
+function m3u8Attrs(s) {
+  const o = {};
+  const re = /([A-Z0-9-]+)=("[^"]*"|[^,]*)/g;
+  let m;
+  while ((m = re.exec(s))) o[m[1]] = m[2].replace(/^"|"$/g, '');
+  return o;
+}
+
+function parseM3u8(text, base) {
+  const out = { variants: [], segments: [], audioUris: new Set(), map: '', key: '', byterange: false, ended: false };
+  const lines = text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+  const abs = (x) => new URL(x, base).href;
+  for (let i = 0; i < lines.length; i++) {
+    const l = lines[i];
+    if (l.startsWith('#EXT-X-STREAM-INF:')) {
+      const a = m3u8Attrs(l.slice(18));
+      const uri = lines[i + 1] && !lines[i + 1].startsWith('#') ? lines[++i] : '';
+      if (uri) out.variants.push({ url: abs(uri), bw: Number(a.BANDWIDTH) || 0, audio: a.AUDIO || '' });
+    } else if (l.startsWith('#EXT-X-MEDIA:')) {
+      const a = m3u8Attrs(l.slice(13));
+      if (a.TYPE === 'AUDIO' && a.URI) out.audioUris.add(a['GROUP-ID']);
+    } else if (l.startsWith('#EXT-X-KEY:')) {
+      const a = m3u8Attrs(l.slice(11));
+      if (a.METHOD && a.METHOD !== 'NONE') out.key = a.METHOD;
+    } else if (l.startsWith('#EXT-X-MAP:')) {
+      const a = m3u8Attrs(l.slice(11));
+      if (a.URI) out.map = abs(a.URI);
+      if (a.BYTERANGE) out.byterange = true;
+    } else if (l.startsWith('#EXT-X-BYTERANGE')) {
+      out.byterange = true;
+    } else if (l.startsWith('#EXT-X-ENDLIST')) {
+      out.ended = true;
+    } else if (!l.startsWith('#')) {
+      out.segments.push(abs(l));
+    }
+  }
+  return out;
+}
+
+// שם קובץ בטוח (גם בעברית), עם הסיומת המקורית
+function attachment(name, ext) {
+  const clean = String(name || '').replace(/[\x00-\x1f\\/:*?"<>|]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 80) || 'video';
+  return "attachment; filename=\"video." + ext + "\"; filename*=UTF-8''" + encodeURIComponent(clean + '.' + ext);
+}
+
+const CT_EXT = { 'video/mp4': 'mp4', 'video/webm': 'webm', 'video/quicktime': 'mov', 'video/x-matroska': 'mkv', 'video/ogg': 'ogv', 'video/mp2t': 'ts', 'video/x-m4v': 'm4v' };
+
+async function downloadHls(res, url, name, referer, closed) {
+  let pl = await fetchPage(url, { referer });
+  let m = parseM3u8(pl.body, pl.finalUrl);
+  if (m.variants.length) {
+    // האיכות הגבוהה ביותר שבה השמע נמצא בתוך הווידאו (לא ברצועה נפרדת)
+    const muxed = m.variants.filter((v) => !v.audio || !m.audioUris.has(v.audio));
+    if (!muxed.length) throw new Error('בסטרים הזה השמע נמצא ברצועה נפרדת – עדיין לא נתמך');
+    const best = muxed.sort((a, b) => b.bw - a.bw)[0];
+    pl = await fetchPage(best.url, { referer });
+    m = parseM3u8(pl.body, pl.finalUrl);
+  }
+  if (m.key) throw new Error('הסטרים מוצפן (' + m.key + ') – אי אפשר להוריד אותו');
+  if (m.byterange) throw new Error('פורמט סטרים לא נתמך (BYTERANGE)');
+  if (!m.segments.length) throw new Error('לא נמצאו קטעי וידאו בסטרים');
+  if (!m.ended) throw new Error('זה שידור חי – אי אפשר להוריד אותו כקובץ');
+  if (m.segments.length > MAX_SEGMENTS) throw new Error('הסרטון ארוך מדי להורדה');
+
+  let started = false;
+  const write = async (chunk) => {
+    if (!started) {
+      started = true;
+      res.writeHead(200, { 'Content-Type': 'video/mp4', 'Content-Disposition': attachment(name, 'mp4'), 'Cache-Control': 'no-store' });
+    }
+    if (!res.write(Buffer.from(chunk))) await new Promise((r) => res.once('drain', r));
+  };
+
+  if (m.map) {
+    // הקטעים כבר בפורמט MP4 (fMP4): מחברים אותם כמו שהם
+    const init = await fetchBuffer(m.map, { referer });
+    await write(init.buf);
+    for (const seg of m.segments) {
+      if (closed()) return;
+      await write((await fetchBuffer(seg, { referer })).buf);
+    }
+    return res.end();
+  }
+
+  // קטעי MPEG-TS: הופכים ל-MP4 בלי לקודד מחדש (mux.js)
+  const tm = new muxjs.mp4.Transmuxer();
+  let pending = [];
+  let initDone = false;
+  tm.on('data', (seg) => {
+    if (!initDone) {
+      pending.push(seg.initSegment);
+      initDone = true;
+    }
+    pending.push(seg.data);
+  });
+  for (const seg of m.segments) {
+    if (closed()) return;
+    const { buf } = await fetchBuffer(seg, { referer });
+    if (buf[0] !== 0x47) throw new Error('פורמט קטעי הווידאו לא נתמך');
+    tm.push(new Uint8Array(buf));
+    tm.flush();
+    const out = pending;
+    pending = [];
+    for (const c of out) await write(c);
+  }
+  if (!started) throw new Error('לא הצלחתי להמיר את הסטרים ל-MP4');
+  res.end();
+}
+
+async function downloadFile(res, url, name, referer) {
+  if (/\.mpd(?=$|[?#])/i.test(url)) throw new Error('סטרים DASH (mpd) עדיין לא נתמך בהורדה');
+  if (STREAM_EXT.test(url)) return 'hls';
+  const { res: up, req, finalUrl } = await openUrl(url, { referer });
+  const ct = String(up.headers['content-type'] || '').split(';')[0].trim().toLowerCase();
+  if (/mpegurl/.test(ct)) {
+    req.destroy();
+    return 'hls';
+  }
+  if (/^(text\/html|application\/json|text\/plain)/.test(ct)) {
+    req.destroy();
+    throw new Error('הכתובת הזו היא לא קובץ וידאו');
+  }
+  const extM = VIDEO_EXT.exec(new URL(finalUrl).pathname);
+  const ext = (extM && extM[1].toLowerCase()) || CT_EXT[ct] || 'mp4';
+  const h = { 'Content-Type': ct.startsWith('video/') ? ct : 'video/' + (ext === 'mov' ? 'quicktime' : ext), 'Content-Disposition': attachment(name, ext), 'Cache-Control': 'no-store' };
+  if (up.headers['content-length']) h['Content-Length'] = up.headers['content-length'];
+  res.writeHead(200, h);
+  up.pipe(res);
+  res.on('close', () => req.destroy());
+  return 'done';
+}
+
+// ההורדה נפתחת כקישור רגיל, אז שגיאה מוצגת כדף קצר בעברית ולא כ-JSON
+function downloadError(req, res, msg, code = 502) {
+  if (!/text\/html/.test(req.headers.accept || '')) return send(res, code, { ok: false, error: msg });
+  const esc = msg.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
+  res.writeHead(code, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
+  res.end(
+    '<!DOCTYPE html><html lang="he" dir="rtl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">' +
+      '<title>Vidit – ההורדה נכשלה</title><style>body{font-family:system-ui,Arial,sans-serif;margin:0;padding:32px 16px;background:#f5f4fb;color:#1d1a33}' +
+      '@media (prefers-color-scheme:dark){body{background:#14121f;color:#efedfb}}main{max-width:520px;margin:0 auto}h1{font-size:20px}</style></head>' +
+      '<body><main><h1>ההורדה נכשלה</h1><p>' + esc + '</p><p><a href="javascript:history.back()" style="color:#7367f0">חזרה</a></p></main></body></html>'
+  );
+}
+
+async function handleDownload(req, res, u, ip) {
+  let url = (u.searchParams.get('url') || '').trim();
+  if (!/^https?:\/\//i.test(url)) return downloadError(req, res, 'חסרה כתובת וידאו', 400);
+  const name = u.searchParams.get('name') || '';
+  let referer = u.searchParams.get('ref') || '';
+  if (!/^https?:\/\//i.test(referer)) referer = '';
+
+  const mine = downloads.get(ip) || 0;
+  if (mine >= MAX_DOWNLOADS_PER_IP || downloadsTotal >= MAX_DOWNLOADS) {
+    return downloadError(req, res, 'יש כבר הורדות פעילות. חכה שיסתיימו ונסה שוב.', 429);
+  }
+  downloads.set(ip, mine + 1);
+  downloadsTotal++;
+  let finished = false;
+  const done = () => {
+    if (finished) return;
+    finished = true;
+    downloadsTotal--;
+    const n = (downloads.get(ip) || 1) - 1;
+    if (n > 0) downloads.set(ip, n);
+    else downloads.delete(ip);
+  };
+  let closed = false;
+  res.on('close', () => {
+    closed = true;
+    done();
+  });
+
+  try {
+    const r = await downloadFile(res, url, name, referer);
+    if (r === 'hls') await downloadHls(res, url, name, referer, () => closed);
+  } catch (e) {
+    if (!res.headersSent) downloadError(req, res, e.message || 'ההורדה נכשלה');
+    else res.destroy();
+  }
+}
+
+/* ------------------------------------------------------------------ */
 /* API                                                                */
 /* ------------------------------------------------------------------ */
 
@@ -690,6 +944,15 @@ const server = http.createServer(async (req, res) => {
     } catch (e) {
       return send(res, 502, { ok: false, error: e.message || 'שגיאה בהורדת הדף' });
     }
+  }
+
+  if (u.pathname === '/api/download') {
+    if (ACCESS_KEY && (req.headers['x-key'] || u.searchParams.get('key')) !== ACCESS_KEY) {
+      return send(res, 401, { ok: false, error: 'נדרש מפתח גישה' });
+    }
+    const ip = String(req.headers['x-forwarded-for'] || req.socket.remoteAddress || '').split(',')[0].trim();
+    if (rateLimited(ip)) return send(res, 429, { ok: false, error: 'יותר מדי בקשות, נסה שוב בעוד כמה דקות' });
+    return handleDownload(req, res, u, ip);
   }
 
   if (u.pathname === '/' || u.pathname === '/index.html') {

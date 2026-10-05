@@ -1,8 +1,8 @@
 # PROJECT_STATE – Vidit
 
 ## Current Focus
-חיבור הממשק ל-`vidit.vplusstudio.app` דרך Cloudflare Workers. מוזג ל-main (PR #1); הפריסה דילגה כי אין עדיין Secret.
-הצעד הבא: המשתמש מוסיף את `CLOUDFLARE_API_TOKEN`, מריצים שוב את "Deploy to Cloudflare" (Run workflow) ובודקים בלוג את שורת ה-custom domain.
+חיבור הממשק ל-`vidit.vplusstudio.app` דרך Cloudflare Workers. פרוס (5.10.2026): https://vidit.vplusstudio.app + https://vidit.ronmailx.workers.dev.
+הצעד הבא: בדיקה בטלפון; אם `CORS_ORIGIN` מוגדר ב-Render — להוסיף את הכתובת החדשה.
 
 ## סטטוס
 - [x] שרת Node + ממשק עברי RTL (`server.js`, `index.html`)
@@ -12,7 +12,8 @@
 - [x] הממשק בכתובת סטטית פונה אוטומטית לשרת ב-Render
 - [x] `CORS_ORIGIN` תומך בכמה כתובות מופרדות בפסיק
 - [x] מיזוג ל-main (PR #1)
-- [ ] Secret `CLOUDFLARE_API_TOKEN` בריפו (רק המשתמש)
+- [x] Secret `CLOUDFLARE_API_TOKEN` בריפו
+- [x] פריסה ל-Cloudflare הצליחה (custom domain נוצר)
 - [ ] אם `CORS_ORIGIN` מוגדר ב-Render: להוסיף `https://vidit.vplusstudio.app`
 - [ ] אימות בטלפון: https://vidit.vplusstudio.app
 - [ ] מסמכים משפטיים ב-`docs/legal/`

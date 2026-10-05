@@ -7,41 +7,13 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/setup-node@v4
-        with: { node-version: 22 }
-      - name: Playlist API
+      - name: Player JS ad tag
         run: |
           UA="Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Mobile Safari/537.36"
-          U="https://www.mako.co.il/AjaxPage?jspName=playlist.jsp&vcmid=1ac388ae74d38910VgnVCM200000650a10acRCRD&videoChannelId=fdccb2eb226bb110VgnVCM100000290c10acRCRD&galleryChannelId=690e882977d38910VgnVCM100000700a10acRCRD&isGallery=false&consumer=web_html5&encryption=no"
-          curl -s -A "$UA" "$U" | head -c 3000; echo
-          curl -s -A "$UA" "https://www.mako.co.il/player-embed/?vid=1ac388ae74d38910VgnVCM200000650a10acRCRD&cid=fdccb2eb226bb110VgnVCM100000290c10acRCRD&galleryCid=690e882977d38910VgnVCM100000700a10acRCRD" | grep -oiE '.{0,100}(ajax|playlist|vast|ima|adtag|m3u8|mp4|doubleclick)[^<]{0,150}' | head -40
-      - name: Browser network capture
-        run: |
-          mkdir b && cd b && npm init -y >/dev/null && npm i playwright@1 >/dev/null 2>&1 && npx playwright install --with-deps chromium >/dev/null 2>&1
-          cat > cap.mjs <<'JS'
-          import { chromium, devices } from 'playwright';
-          const b = await chromium.launch();
-          const ctx = await b.newContext({ ...devices['Pixel 7'], locale: 'he-IL' });
-          const p = await ctx.newPage();
-          const seen = new Set();
-          const log = (tag, u) => { const k = tag + u.slice(0, 300); if (seen.has(k)) return; seen.add(k); console.log(tag, u.slice(0, 400)); };
-          p.on('request', r => {
-            const u = r.url();
-            if (/\.(m3u8|mpd|mp4|webm)(\?|$)|vast|vmap|gampad\/ads|pubads|imasdk|playlist|AjaxPage|entitlement|ticket|\.ts(\?|$)|\.m4s/i.test(u)) log('REQ ' + r.resourceType(), u);
-          });
-          p.on('response', async r => {
-            const u = r.url();
-            if (/gampad\/ads|vast|vmap/i.test(u)) { try { const t = await r.text(); console.log('VASTBODY', u.slice(0,120), t.slice(0, 1500).replace(/\s+/g,' ')); } catch (e) {} }
-            if (/AjaxPage.*playlist|entitlement/i.test(u)) { try { console.log('API', u.slice(0,200), (await r.text()).slice(0, 1500)); } catch (e) {} }
-          });
-          await p.goto(process.env.TARGET, { waitUntil: 'domcontentloaded', timeout: 60000 });
-          await p.waitForTimeout(8000);
-          for (const sel of ['[id^="player_"]', 'video', '.vjs-big-play-button', 'button[aria-label*="Play"]', '[class*="play"]']) {
-            try { await p.locator(sel).first().click({ timeout: 3000 }); console.log('CLICKED', sel); break; } catch (e) {}
-          }
-          await p.waitForTimeout(40000);
-          await b.close();
-          JS
-          node cap.mjs
-        env:
-          TARGET: https://www.mako.co.il/news-money/consumer/Article-690e882977d3891027.htm
+          curl -s -A "$UA" https://rcs.mako.co.il/player-responsive/mako-video-player.js -o p.js; wc -c p.js
+          grep -oE '.{0,250}(gampad|output=vast|adTagUrl|makoCatDFP|cust_params|description_url|sz=|"iu"|\.iu|PREROLL|preroll|vpos|ad_rule|vmap)[^;]{0,250}' p.js | head -60
+          echo ===== playlist12
+          curl -s -A "$UA" "https://www.mako.co.il/AjaxPage?jspName=playlist12.jsp&vcmid=1ac388ae74d38910VgnVCM200000650a10acRCRD&videoChannelId=fdccb2eb226bb110VgnVCM100000290c10acRCRD&galleryChannelId=690e882977d38910VgnVCM100000700a10acRCRD&consumer=responsive" | head -c 1500; echo
+          echo ===== m3u8
+          curl -s -A "$UA" -w "\nHTTP %{http_code}\n" "https://mako-vod.akamaized.net/i/SHORT/CH22_NEWS/2025/07/19yad2_vtr2_n20250724_v1/19yad2_vtr2_n20250724_v1_,850,.mp4.csmil/master.m3u8" | head -15
+          curl -s -A "$UA" -w "\nHTTP %{http_code}\n" "https://d3par5938i20jq.cloudfront.net/hls/SHORT/CH22_NEWS/2025/07/19yad2_vtr2_n20250724_v1/19yad2_vtr2_n20250724_v1_,850,.mp4.csmil/index.m3u8" | head -15

@@ -39,6 +39,13 @@ Cloudflare ו-GitHub Pages מגישים רק את `index.html`. כשהממשק �
 
 התשובה: `{ ok, title, poster, finalUrl, results: [{ url, kind, source }], notes }`
 כאשר `kind` הוא `stream` (m3u8/mpd), `file` (mp4 וכו'), או `embed` (נגן מוטמע).
+`role` הוא `main` (הסרטון) או `ad` (פרסומת). לפרסומות יש גם `adIndex` (סדר), ולפעמים `duration` ו-`adTitle`.
+`adsCount` = מספר הפרסומות שנמצאו.
+
+## פרסומות
+- כתובת מזוהה כפרסומת לפי רשת הפרסום (doubleclick, springserve, teads ועוד) או לפי מילים בכתובת (`ads`, `preroll`, `vast` וכו').
+- תגיות VAST/VMAP שנמצאות בדף מורדות ומפוענחות (כולל Wrapper, עד 6 הורדות), וכל פרסומת מוצגת כקובץ וידאו נפרד לפי הסדר.
+- מגבלה: פרסומות שהנגן מבקש רק בזמן ריצה (JavaScript), או פרסומות שמוטמעות בתוך אותו סטרים (SSAI), לא יופיעו בנפרד.
 
 ## אבטחה
 - חסום חיבור לכתובות פנימיות (localhost, 10.x, 192.168.x, 169.254.x ועוד), גם דרך הפניות ו-DNS.

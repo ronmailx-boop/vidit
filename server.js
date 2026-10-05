@@ -349,6 +349,116 @@ function extractFromHtml(html, baseUrl) {
 }
 
 /* ------------------------------------------------------------------ */
+/* פרסומות: זיהוי לפי כתובת + פענוח תגיות VAST / VMAP                 */
+/* ------------------------------------------------------------------ */
+
+const MAX_AD_FETCHES = 6; // סה"כ הורדות של תגיות פרסום (כולל Wrapper)
+const MAX_AD_TAGS = 3;
+const AD_HOSTS = /(^|\.)(doubleclick\.net|googlesyndication\.com|googleadservices\.com|imasdk\.googleapis\.com|adnxs\.com|springserve\.com|spotxchange\.com|spotx\.tv|teads\.tv|innovid\.com|flashtalking\.com|serving-sys\.com|adform\.net|smartadserver\.com|fwmrm\.net|freewheel\.tv|tremorhub\.com|unrulymedia\.com|aniview\.com|primis\.tech|adsrvr\.org|rubiconproject\.com|pubmatic\.com|openx\.net|amazon-adsystem\.com|vidazoo\.com|connatix\.com|stickyadstv\.com|celtra\.com|admanmedia\.com|vdo\.ai)$/i;
+const AD_WORD = /(?:^|[\/_.\-=?&])(?:ads?|adv|advert|advertising|adserver|adtag|preroll|pre-roll|midroll|mid-roll|postroll|post-roll|vast|vmap|commercials?|sponsored)(?:[\/_.\-=?&]|$)/i;
+const VAST_HINT = /(vast|vmap|\/gampad\/ads|adtag|ad_tag|[\/?&]ads?[\/?&=])/i;
+
+function isAdUrl(url) {
+  try {
+    const u = new URL(url);
+    return AD_HOSTS.test(u.hostname) || AD_WORD.test(u.hostname + u.pathname + u.search);
+  } catch (e) {
+    return false;
+  }
+}
+
+function xmlText(s) {
+  return s
+    .replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, '$1')
+    .replace(/&amp;/g, '&')
+    .trim();
+}
+
+function xmlAttrs(s) {
+  const o = {};
+  const re = /([\w:-]+)\s*=\s*["']([^"']*)["']/g;
+  let m;
+  while ((m = re.exec(s))) o[m[1].toLowerCase()] = m[2];
+  return o;
+}
+
+// בוחר קובץ אחד לכל פרסומת: mp4 קודם, ואז הרזולוציה הגבוהה ביותר עד 1280
+function bestMediaFile(files) {
+  const playable = files.filter((f) => !/javascript|vpaid|shockwave|flash/i.test(f.type + ' ' + f.api));
+  if (!playable.length) return null;
+  const score = (f) => (/mp4/i.test(f.type) || /\.mp4/i.test(f.url) ? 10000 : 0) + Math.min(f.width || 0, 1280);
+  return playable.sort((a, b) => score(b) - score(a))[0];
+}
+
+// מפענח מסמך VAST / VMAP: פרסומות עם קבצי וידאו, ותגיות להמשך (Wrapper / VMAP)
+function parseVast(xml) {
+  const ads = [];
+  const next = [];
+  const adRe = /<Ad\b([^>]*)>([\s\S]*?)<\/Ad>/gi;
+  let m;
+  while ((m = adRe.exec(xml))) {
+    const body = m[2];
+    const wrap = /<VASTAdTagURI[^>]*>([\s\S]*?)<\/VASTAdTagURI>/i.exec(body);
+    if (wrap) {
+      next.push(xmlText(wrap[1]));
+      continue;
+    }
+    const files = [];
+    const mfRe = /<MediaFile\b([^>]*)>([\s\S]*?)<\/MediaFile>/gi;
+    let f;
+    while ((f = mfRe.exec(body))) {
+      const a = xmlAttrs(f[1]);
+      const url = xmlText(f[2]);
+      if (/^https?:\/\//i.test(url)) files.push({ url, type: a.type || '', api: a.apiframework || '', width: parseInt(a.width, 10) || 0 });
+    }
+    const best = bestMediaFile(files);
+    if (!best) continue;
+    const dur = /<Duration>([\s\S]*?)<\/Duration>/i.exec(body);
+    const title = /<AdTitle>([\s\S]*?)<\/AdTitle>/i.exec(body);
+    ads.push({
+      url: best.url,
+      sequence: parseInt(xmlAttrs(m[1]).sequence, 10) || 0,
+      duration: dur ? xmlText(dur[1]).replace(/\.\d+$/, '').replace(/^00:/, '') : '',
+      title: title ? xmlText(title[1]) : '',
+    });
+  }
+  const vmapRe = /<vmap:AdTagURI[^>]*>([\s\S]*?)<\/vmap:AdTagURI>/gi;
+  while ((m = vmapRe.exec(xml))) next.push(xmlText(m[1]));
+  ads.sort((a, b) => a.sequence - b.sequence);
+  return { ads, next };
+}
+
+function fillMacros(url) {
+  const r = String(Date.now());
+  return url.replace(/\[(timestamp|cachebuster|cache_buster|random|correlator)\]?|%%CACHEBUSTER%%|\{(?:random|cachebuster|timestamp)\}/gi, r);
+}
+
+// מוריד תגיות פרסום (עד MAX_AD_FETCHES) ומחזיר את קבצי הווידאו של הפרסומות לפי הסדר
+async function resolveAds(tags, referer, notes) {
+  const out = [];
+  const queue = tags.map((t) => ({ url: t, depth: 0 }));
+  const seen = new Set();
+  let fetches = 0;
+  while (queue.length && fetches < MAX_AD_FETCHES) {
+    const { url, depth } = queue.shift();
+    const target = fillMacros(url);
+    if (seen.has(target) || depth > 3) continue;
+    seen.add(target);
+    fetches++;
+    try {
+      const page = await fetchPage(target, { referer });
+      if (!/<(VAST|vmap:VMAP)\b/i.test(page.body)) continue;
+      const { ads, next } = parseVast(page.body);
+      ads.forEach((a) => out.push({ ...a, tag: new URL(target).hostname }));
+      next.forEach((n) => queue.push({ url: n, depth: depth + 1 }));
+    } catch (e) {
+      notes.push('לא הצלחתי לפתוח תגית פרסום מ-' + new URL(target).hostname + ' (' + e.message + ')');
+    }
+  }
+  return out;
+}
+
+/* ------------------------------------------------------------------ */
 /* API                                                                */
 /* ------------------------------------------------------------------ */
 
@@ -379,7 +489,7 @@ async function scrape(target, { depth = 0, all = false } = {}) {
   const notes = [];
 
   if (depth >= 1) {
-    const iframes = results.filter((r) => r.kind === 'embed' && r.source === 'iframe').slice(0, MAX_IFRAMES);
+    const iframes = results.filter((r) => r.kind === 'embed' && r.source === 'iframe' && !isAdUrl(r.url)).slice(0, MAX_IFRAMES);
     for (const f of iframes) {
       try {
         const sub = await fetchPage(f.url, { referer: page.finalUrl });
@@ -397,8 +507,33 @@ async function scrape(target, { depth = 0, all = false } = {}) {
     results.sort((a, b) => rank[a.kind] - rank[b.kind]);
   }
 
+  // פרסומות: כתובות שזוהו כפרסום, ותגיות VAST/VMAP שמפוענחות לקבצי הווידאו של הפרסומות
+  results.forEach((r) => {
+    r.role = isAdUrl(r.url) ? 'ad' : 'main';
+  });
+  const tags = results
+    .filter((r) => r.role === 'ad' && r.kind !== 'stream' && r.kind !== 'file' && VAST_HINT.test(r.url) && !NOT_VIDEO_EXT.test(r.url.replace(/\.xml(?=$|[?#])/i, '')))
+    .slice(0, MAX_AD_TAGS)
+    .map((r) => r.url);
+  const tagSet = new Set(tags);
+  if (tags.length) {
+    for (const a of await resolveAds(tags, page.finalUrl, notes)) {
+      if (seen.has(a.url)) continue;
+      seen.add(a.url);
+      results.push({ url: a.url, kind: classify(a.url) === 'stream' ? 'stream' : 'file', source: 'תגית פרסום: ' + a.tag, role: 'ad', duration: a.duration, adTitle: a.title });
+    }
+  }
+  // תגית הפרסום עצמה היא לא וידאו – מוצגת רק עם all=1
+  results.forEach((r) => {
+    if (tagSet.has(r.url)) r.kind = 'other';
+  });
+  let n = 0;
+  results.forEach((r) => {
+    if (r.role === 'ad' && r.kind !== 'other') r.adIndex = ++n;
+  });
+
   const videos = results.filter((r) => r.kind !== 'other');
-  if (!videos.length) {
+  if (!videos.some((r) => r.role === 'main')) {
     notes.push('לא נמצאה כתובת וידאו ב-HTML של הדף. ייתכן שהנגן נטען בעזרת JavaScript אחרי שהדף נפתח.');
   }
   return {
@@ -411,6 +546,7 @@ async function scrape(target, { depth = 0, all = false } = {}) {
     bytes: page.bytes,
     results: all ? results : videos,
     hiddenOthers: all ? 0 : results.length - videos.length,
+    adsCount: n,
     notes,
   };
 }

@@ -11,6 +11,7 @@
 - [x] קבצי Cloudflare: `wrangler.jsonc`, `.assetsignore`, `.github/workflows/deploy-cloudflare.yml`
 - [x] הממשק בכתובת סטטית פונה אוטומטית לשרת ב-Render
 - [x] כתובת השרת ב-Render מוטמעת מראש ב"הגדרות מתקדמות" (PR #2, אומת בטלפון)
+- [x] פירוק פרסומות: זיהוי כתובות פרסום + פענוח VAST/VMAP, תצוגה נפרדת "הסרטון" / "פרסומות"
 - [x] `CORS_ORIGIN` תומך בכמה כתובות מופרדות בפסיק
 - [x] מיזוג ל-main (PR #1)
 - [x] Secret `CLOUDFLARE_API_TOKEN` בריפו

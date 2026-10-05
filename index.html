@@ -12,12 +12,12 @@
 :root {
   --bg:#f5f4fb; --surface:#fff; --surface-2:#efedfa; --text:#1d1a33; --muted:#6b6788; --line:#e0ddf2;
   --primary:#7367f0; --primary-dark:#7c4ddb; --on-primary:#fff; --code-bg:#f0eefb; --danger:#c93a4a;
-  --stream:#7c4ddb; --file:#1f9d6b; --embed:#d9822b; --other:#6b6788;
+  --stream:#7c4ddb; --file:#1f9d6b; --embed:#d9822b; --other:#6b6788; --ad:#946500;
 }
 @media (prefers-color-scheme: dark) {
   :root {
     --bg:#14121f; --surface:#1d1a2e; --surface-2:#272340; --text:#efedfb; --muted:#a29fc0; --line:#322e4e;
-    --code-bg:#15132a; --danger:#ff7b8a; --stream:#a58bff; --file:#4cd29b; --embed:#f2a65a; --other:#a29fc0;
+    --code-bg:#15132a; --danger:#ff7b8a; --stream:#a58bff; --file:#4cd29b; --embed:#f2a65a; --other:#a29fc0; --ad:#e9c46a;
   }
 }
 * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
@@ -83,6 +83,10 @@ details.adv input { margin-top:8px; }
 .kind { font-weight:800; font-size:14px; }
 .result.stream .kind { color:var(--stream); } .result.file .kind { color:var(--file); } .result.embed .kind { color:var(--embed); } .result.other .kind { color:var(--other); }
 .src { font-size:12px; color:var(--muted); }
+.result.ad { border-inline-start-color:var(--ad); }
+.result.ad .kind { color:var(--ad); }
+.sec { font-size:18px; font-weight:800; margin:16px 2px 10px; }
+.sec small { font-size:13px; font-weight:500; color:var(--muted); }
 .url {
   direction:ltr; text-align:left; font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace; font-size:13px;
   background:var(--code-bg); border-radius:10px; padding:10px 12px; word-break:break-all; overflow-wrap:anywhere;
@@ -175,18 +179,27 @@ details.adv input { margin-top:8px; }
       out.appendChild(el('div', 'empty', data.hiddenOthers ? 'לא נמצאו כתובות וידאו. סמן "הצג גם קישורים שלא זוהו כווידאו" כדי לראות את ' + data.hiddenOthers + ' הקישורים האחרים.' : 'לא נמצאו כתובות בדף.'));
       return;
     }
-    var h = el('h2', null, 'נמצאו ' + data.results.length + ' כתובות'); h.style.cssText = 'font-size:18px;font-weight:800;margin:0 2px 10px';
-    out.appendChild(h);
-    data.results.forEach(function (r) {
-      var c = el('div', 'result ' + r.kind);
-      var top = el('div', 'rtop'); top.appendChild(el('span', 'kind', KINDS[r.kind])); top.appendChild(el('span', 'src', r.source));
+    var main = data.results.filter(function (r) { return r.role !== 'ad'; });
+    var ads = data.results.filter(function (r) { return r.role === 'ad'; });
+    function section(title, sub) {
+      var h = el('h2', 'sec', title);
+      if (sub) { h.appendChild(document.createTextNode(' ')); h.appendChild(el('small', null, sub)); }
+      out.appendChild(h);
+    }
+    function card(r) {
+      var ad = r.role === 'ad';
+      var label = ad && r.adIndex ? 'פרסומת ' + r.adIndex + (r.duration ? ' · ' + r.duration : '') + ' · ' + KINDS[r.kind] : KINDS[r.kind];
+      var c = el('div', 'result ' + r.kind + (ad ? ' ad' : ''));
+      var top = el('div', 'rtop'); top.appendChild(el('span', 'kind', label)); top.appendChild(el('span', 'src', r.adTitle || r.source));
       var u = el('div', 'url', r.url);
       var row = el('div', 'row');
       var cb = el('button', 'btn primary sm', 'העתק'); cb.type = 'button'; cb.addEventListener('click', function () { copy(r.url); });
       var ob = el('a', 'btn sm', 'פתח'); ob.href = r.url; ob.target = '_blank'; ob.rel = 'noopener noreferrer';
       row.appendChild(cb); row.appendChild(ob);
       c.appendChild(top); c.appendChild(u); c.appendChild(row); out.appendChild(c);
-    });
+    }
+    if (main.length) { section('הסרטון', main.length > 1 ? main.length + ' כתובות' : ''); main.forEach(card); }
+    if (ads.length) { section('פרסומות', ads.length + ' כתובות, לפי סדר ההופעה'); ads.forEach(card); }
   }
 
   async function run() {

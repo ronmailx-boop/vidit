@@ -7,18 +7,20 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - name: VAST request
+      - name: VAST playlist follow
         run: |
           UA="Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Mobile Safari/537.36"
           PAGE="https://www.mako.co.il/news-money/consumer/Article-690e882977d3891027.htm"
           enc() { node -e 'console.log(encodeURIComponent(process.argv[1]))' "$1"; }
           CP=$(enc "LEVEL4=News_money_consumer&MAKOPAGE=690e882977d38910VgnVCM100000700a10acRCRD")
-          for IU in "/242748299/mako/news/News_money/" "/242748299/mako/news/News_money" "/242748299/mako/news/News_money/PREROLL"; do
-            for OUT in xml_vast2 xml_vast4 vast; do
-              U="https://pubads.g.doubleclick.net/gampad/ads?slotname=$(enc $IU)&iu=$(enc $IU)&sz=4x4&ciu_szs=&url=$(enc $PAGE)&description_url=$(enc $PAGE)&unviewed_position_start=1&output=$OUT&env=vp&gdfp_req=1&vid=1&impl=s&cust_params=$CP&cmsid=4099&correlator=$RANDOM$RANDOM"
-              B=$(curl -s -A "$UA" -H "Referer: $PAGE" -H "Accept-Language: he-IL" "$U")
-              echo "== $IU $OUT bytes=${#B} ads=$(echo "$B" | grep -o '<Ad ' | wc -l) media=$(echo "$B" | grep -o '<MediaFile' | wc -l) wrap=$(echo "$B" | grep -o 'VASTAdTagURI' | wc -l)"
-              echo "$B" | head -c 600; echo
-              echo "$B" | grep -oE '<MediaFile[^>]*>[^<]*(<!\[CDATA\[[^]]*)?' | head -5
-            done
+          IU="/242748299/mako/news/News_money/"
+          U="https://pubads.g.doubleclick.net/gampad/ads?slotname=$(enc $IU)&sz=4x4&ciu_szs=&url=$(enc $PAGE)&unviewed_position_start=1&output=xml_vast2&env=vp&gdfp_req=1&vid=1&cust_params=$CP&cmsid=4099&correlator=$RANDOM$RANDOM"
+          curl -s -A "$UA" -H "Referer: $PAGE" "$U" > pl.xml
+          cat pl.xml | sed 's/useragent=[^&]*//g' | cut -c1-400
+          echo; echo ======= FOLLOW
+          grep -oE '<!\[CDATA\[[^]]+' pl.xml | sed 's/<!\[CDATA\[//' | while read -r A; do
+            B=$(curl -s -A "$UA" -H "Referer: $PAGE" "$A")
+            echo "-- bytes=${#B} ads=$(echo "$B" | grep -o '<Ad ' | wc -l) media=$(echo "$B" | grep -o '<MediaFile' | wc -l) wrap=$(echo "$B" | grep -o 'VASTAdTagURI' | wc -l)"
+            echo "$B" | tr '\n' ' ' | grep -oE '<(AdTitle|Duration|VASTAdTagURI)>[^/]{0,300}' | head -6
+            echo "$B" | tr '\n' ' ' | grep -oE '<MediaFile[^>]*>\s*<!\[CDATA\[[^]]*' | head -4
           done

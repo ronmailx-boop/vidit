@@ -138,6 +138,7 @@ details.adv input { margin-top:8px; }
   var $ = function (id) { return document.getElementById(id); };
   var KINDS = { stream:'סטרים (HLS / DASH)', file:'קובץ וידאו', embed:'נגן מוטמע', other:'קישור אחר' };
   var busy = false;
+  var server = '';
 
   function store(k, v) { try { if (v === undefined) return localStorage.getItem(k); localStorage.setItem(k, v); } catch (e) {} return null; }
   // כתובת השרת הקבועה ב-Render. בהרצה מקומית ריק = אותו שרת שמגיש את הדף
@@ -195,6 +196,17 @@ details.adv input { margin-top:8px; }
       var row = el('div', 'row');
       var cb = el('button', 'btn primary sm', 'העתק'); cb.type = 'button'; cb.addEventListener('click', function () { copy(r.url); });
       var ob = el('a', 'btn sm', 'פתח'); ob.href = r.url; ob.target = '_blank'; ob.rel = 'noopener noreferrer';
+      // הורדה דרך השרת: קובץ עובר כמו שהוא, סטרים HLS מומר ל-MP4
+      if (r.kind === 'file' || (r.kind === 'stream' && /\.m3u8(?=$|[?#])/i.test(r.url))) {
+        var name = (data.title || 'video') + (ad && r.adIndex ? ' - פרסומת ' + r.adIndex : '');
+        var q = 'url=' + encodeURIComponent(r.url) + '&name=' + encodeURIComponent(name) + '&ref=' + encodeURIComponent(data.finalUrl || '');
+        if ($('key').value) q += '&key=' + encodeURIComponent($('key').value);
+        var db = el('a', 'btn primary sm', r.kind === 'stream' ? 'הורד MP4' : 'הורד');
+        db.href = (server ? server + '/' : '') + 'api/download?' + q;
+        db.addEventListener('click', function () { toast(r.kind === 'stream' ? 'מכין MP4… ההורדה תתחיל בעוד רגע' : 'ההורדה מתחילה…'); });
+        row.appendChild(db);
+        cb.className = 'btn sm';
+      }
       row.appendChild(cb); row.appendChild(ob);
       c.appendChild(top); c.appendChild(u); c.appendChild(row); out.appendChild(c);
     }
@@ -266,6 +278,7 @@ details.adv input { margin-top:8px; }
     if (!base) { base = DEFAULT_SERVER; $('base').value = base; }
     store('vs_key', $('key').value);
     store('vs_base', base === DEFAULT_SERVER ? '' : base);
+    server = base;
     try {
       var qs = 'url=' + encodeURIComponent(url) + '&depth=' + ($('depth').checked ? 1 : 0) + '&all=' + ($('all').checked ? 1 : 0);
       var res = await fetch((base ? base + '/' : '') + 'api/scrape?' + qs, { headers: $('key').value ? { 'x-key': $('key').value } : {} });

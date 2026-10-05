@@ -10,5 +10,8 @@
     "node": ">=18"
   },
   "license": "UNLICENSED",
-  "private": true
+  "private": true,
+  "dependencies": {
+    "mux.js": "^7.1.0"
+  }
 }

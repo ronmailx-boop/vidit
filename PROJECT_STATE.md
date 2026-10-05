@@ -10,6 +10,7 @@
 - [x] GitHub Pages: https://ronmailx-boop.github.io/vidit/ (ממשק בלבד)
 - [x] קבצי Cloudflare: `wrangler.jsonc`, `.assetsignore`, `.github/workflows/deploy-cloudflare.yml`
 - [x] הממשק בכתובת סטטית פונה אוטומטית לשרת ב-Render
+- [x] כתובת השרת ב-Render מוטמעת מראש ב"הגדרות מתקדמות" (PR #2, אומת בטלפון)
 - [x] `CORS_ORIGIN` תומך בכמה כתובות מופרדות בפסיק
 - [x] מיזוג ל-main (PR #1)
 - [x] Secret `CLOUDFLARE_API_TOKEN` בריפו

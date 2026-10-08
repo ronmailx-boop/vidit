@@ -1,0 +1,24 @@
+# TEMPORARY diagnostic – removed before merge.
+name: tmp scrape test
+on:
+  push:
+    branches: [ccr-36db6e32-rixxiw]
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Live Render server, like the phone
+        env:
+          TARGET: https://www.mako.co.il/news-military/2024_q1/Article-5bf44d104aa1e81027.htm
+          SRV: https://vidit-927k.onrender.com
+        run: |
+          U=$(node -e 'console.log(encodeURIComponent(process.env.TARGET))')
+          curl -s -m 120 -o /dev/null -w "health HTTP %{http_code} %{time_total}s\n" $SRV/health
+          for i in 1 2; do
+            curl -s -m 180 -D h$i.txt -o out$i.json -w "scrape$i HTTP %{http_code} total %{time_total}s size %{size_download}\n" -H "Origin: https://vidit.vplusstudio.app" "$SRV/api/scrape?url=$U&depth=1&all=0"
+            tr -d '\r' < h$i.txt | grep -iE "^(HTTP|access-control|content-type)"
+            head -c 700 out$i.json; echo; echo
+          done
+          echo "== short mako article for comparison"
+          U2=$(node -e 'console.log(encodeURIComponent("https://www.mako.co.il/news-money/consumer/Article-690e882977d3891027.htm"))')
+          curl -s -m 180 -o out3.json -w "short HTTP %{http_code} total %{time_total}s\n" -H "Origin: https://vidit.vplusstudio.app" "$SRV/api/scrape?url=$U2&depth=1&all=0"; head -c 300 out3.json; echo

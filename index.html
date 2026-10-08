@@ -64,6 +64,7 @@ input:focus-visible, button:focus-visible, a:focus-visible, summary:focus-visibl
 details.adv { margin-top:12px; font-size:14px; }
 details.adv summary { cursor:pointer; color:var(--muted); font-weight:700; }
 details.adv input { margin-top:8px; }
+.keynote { margin:6px 2px 0; font-size:13px; color:var(--muted); }
 
 #out { margin-top:22px; }
 .page-card { display:flex; gap:12px; align-items:center; margin-bottom:12px; }
@@ -121,9 +122,10 @@ details.adv input { margin-top:8px; }
       <label><input type="checkbox" id="all"> הצג גם קישורים שלא זוהו כווידאו</label>
     </div>
     <details class="adv" id="adv">
-      <summary>הגדרות מתקדמות</summary>
+      <summary>הגדרות מתקדמות<span id="keysum"></span></summary>
       <input type="url" id="base" placeholder="כתובת השרת" autocomplete="off" autocapitalize="off" spellcheck="false">
-      <input type="password" id="key" placeholder="מפתח גישה (רק אם הוגדר ACCESS_KEY בשרת)" autocomplete="off">
+      <input type="password" id="key" placeholder="מפתח גישה (רק אם הוגדר ACCESS_KEY בשרת)" autocomplete="off" aria-describedby="keynote">
+      <p class="keynote" id="keynote" aria-live="polite"></p>
     </details>
     <div class="row go">
       <button class="btn ghost" id="paste" type="button">הדבק</button>
@@ -150,7 +152,18 @@ details.adv input { margin-top:8px; }
   var DEFAULT_SERVER = isLocal ? '' : 'https://vidit-927k.onrender.com';
   $('key').value = store('vs_key') || '';
   $('base').value = store('vs_base') || DEFAULT_SERVER;
-  if ($('key').value || $('base').value !== DEFAULT_SERVER) $('adv').open = true;
+  if ($('base').value !== DEFAULT_SERVER) $('adv').open = true;
+
+  // המפתח נשמר במכשיר ברגע שמקלידים אותו, ומוצג אישור שהוא שמור
+  function canStore() { try { localStorage.setItem('vs_t', '1'); localStorage.removeItem('vs_t'); return true; } catch (e) { return false; } }
+  function keyStatus() {
+    var has = !!$('key').value;
+    if (!canStore()) $('keynote').textContent = has ? 'הדפדפן הזה לא מאפשר לשמור את המפתח (אולי גלישה בסתר) – תצטרך להזין אותו שוב בפעם הבאה.' : '';
+    else $('keynote').textContent = has ? '✓ המפתח שמור במכשיר הזה – לא צריך להזין אותו שוב.' : '';
+    $('keysum').textContent = has && canStore() ? ' · מפתח שמור' : '';
+  }
+  $('key').addEventListener('input', function () { store('vs_key', $('key').value.trim()); keyStatus(); });
+  keyStatus();
 
   function toast(m) {
     var t = $('toast'); t.textContent = m; t.classList.add('show');
@@ -309,7 +322,9 @@ details.adv input { margin-top:8px; }
     var base = $('base').value.trim().replace(/\/+$/, '');
     if (base && !/^https?:\/\//i.test(base)) base = 'https://' + base;
     if (!base) { base = DEFAULT_SERVER; $('base').value = base; }
+    $('key').value = $('key').value.trim();
     store('vs_key', $('key').value);
+    keyStatus();
     store('vs_base', base === DEFAULT_SERVER ? '' : base);
     server = base;
     var qs = 'url=' + encodeURIComponent(url) + '&depth=' + ($('depth').checked ? 1 : 0) + '&all=' + ($('all').checked ? 1 : 0);

@@ -19,6 +19,7 @@
 - [x] אייקון ב-apps.vplusstudio.app (ריפו my-site, אומת בטלפון): נשלף אוטומטית מה-manifest ב-GitHub Pages; האריח מפנה ל-vidit.vplusstudio.app
 - [x] שרת רדום (Render חינמי נרדם אחרי ~15 דק'): הממשק מעיר אותו כשהדף נפתח, ואם בקשה נופלת בזמן ההתעוררות – מציג "השרת מתעורר…", מחכה ל-/health ומנסה שוב (דווח בכתבת mako ארוכה, 57 דק')
 - [x] CORS: ב-Render מוגדר `CORS_ORIGIN=https://ronmailx-boop.github.io` בלבד, ולכן הדפדפן חסם את התשובות ל-vidit.vplusstudio.app ("לא הצלחתי להתחבר לשרת"). תוקן בקוד: הכתובות של הממשק (vidit.vplusstudio.app, workers.dev, github.io) מותרות תמיד. ב-Render מוגדר גם `ACCESS_KEY`.
+- [x] מפתח גישה: נשמר במכשיר כבר בהקלדה (בלי רווחים מסביב), עם אישור "המפתח שמור במכשיר הזה" / אזהרה כשהדפדפן לא מאפשר שמירה. הזיכרון נפרד לכל כתובת (vidit.vplusstudio.app ≠ github.io).
 - [x] `CORS_ORIGIN` תומך בכמה כתובות מופרדות בפסיק
 - [x] מיזוג ל-main (PR #1)
 - [x] Secret `CLOUDFLARE_API_TOKEN` בריפו

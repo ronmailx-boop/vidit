@@ -25,8 +25,7 @@
 
 Cloudflare ו-GitHub Pages מגישים רק את `index.html`. כשהממשק רץ שם, הוא שולח את הבקשות
 לשרת ב-Render אוטומטית (אפשר לשנות כתובת שרת ב"הגדרות מתקדמות").
-אם הוגדר ב-Render `CORS_ORIGIN`, צריך לכלול בו את כל הכתובות, מופרדות בפסיק:
-`https://vidit.vplusstudio.app,https://ronmailx-boop.github.io`
+הכתובות של הממשק (vidit.vplusstudio.app, vidit.ronmailx.workers.dev, ronmailx-boop.github.io) מותרות תמיד. `CORS_ORIGIN` ב-Render מוסיף כתובות נוספות (מופרדות בפסיק).
 
 ## פריסה ל-Cloudflare
 כל push ל-`main` מפעיל את `.github/workflows/deploy-cloudflare.yml` (wrangler).

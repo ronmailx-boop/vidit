@@ -24,7 +24,10 @@ const muxjs = require('mux.js');
 
 const PORT = process.env.PORT || 3000;
 const ACCESS_KEY = process.env.ACCESS_KEY || '';
+// הכתובות של הממשק עצמו מותרות תמיד, גם אם CORS_ORIGIN ב-Render מגדיר רק חלק מהן
+const OWN_ORIGINS = ['https://vidit.vplusstudio.app', 'https://vidit.ronmailx.workers.dev', 'https://ronmailx-boop.github.io'];
 const CORS_ORIGINS = (process.env.CORS_ORIGIN || '*').split(',').map((o) => o.trim().replace(/\/+$/, '')).filter(Boolean);
+if (!CORS_ORIGINS.includes('*')) OWN_ORIGINS.forEach((o) => CORS_ORIGINS.includes(o) || CORS_ORIGINS.push(o));
 
 // מחזיר את ה-Origin המותר לבקשה (תומך בכמה כתובות, למשל Cloudflare + GitHub Pages)
 function corsOrigin(req) {

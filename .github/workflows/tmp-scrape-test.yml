@@ -1,0 +1,29 @@
+# TEMPORARY diagnostic – removed before merge.
+name: tmp scrape test
+on:
+  push:
+    branches: [ccr-36db6e32-rixxiw]
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - run: npm ci
+      - name: API via HTTP (like the phone)
+        env:
+          TARGET: https://www.mako.co.il/news-military/2024_q1/Article-5bf44d104aa1e81027.htm
+        run: |
+          (PORT=3000 node server.js > server.log 2>&1 &) ; until curl -s localhost:3000/health >/dev/null; do sleep 1; done
+          U=$(node -e 'console.log(encodeURIComponent(process.env.TARGET))')
+          time curl -s -m 90 -w "\nHTTP %{http_code} time %{time_total}\n" -H "Origin: https://vidit.vplusstudio.app" "localhost:3000/api/scrape?url=$U&depth=1&all=0" -o out.json -D h.txt; echo "curl exit $?"
+          tr -d '\r' < h.txt | head -5; head -c 3000 out.json; echo
+          echo "--- server log"; cat server.log
+      - name: Page snippets
+        env:
+          TARGET: https://www.mako.co.il/news-military/2024_q1/Article-5bf44d104aa1e81027.htm
+        run: |
+          UA="Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Mobile Safari/537.36"
+          curl -s -A "$UA" -w "\nHTTP %{http_code} size %{size_download}\n" "$TARGET" -o page.html; tail -c 200 page.html; echo
+          grep -oE '.{0,60}(player-embed|videoVcmId|embedUrl|youtube|vimeo|m3u8|mp4)[^"]{0,160}' page.html | sort -u | head -30

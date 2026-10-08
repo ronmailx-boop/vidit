@@ -271,6 +271,35 @@ details.adv input { margin-top:8px; }
     return found;
   }
 
+  function apiUrl(base, path) { return (base ? base + '/' : '') + path; }
+
+  // asleep = אין תשובת JSON מהשרת (שגיאת רשת, או דף ביניים של Render בזמן שהשרת מתעורר)
+  async function scrapeOnce(base, qs) {
+    try {
+      var res = await fetch(apiUrl(base, 'api/scrape?' + qs), { headers: $('key').value ? { 'x-key': $('key').value } : {} });
+      if (res.status === 502 || res.status === 503 || res.status === 504) {
+        var maybe = null;
+        try { maybe = await res.json(); } catch (e) {}
+        return maybe && maybe.error ? { status: res.status, data: maybe } : { asleep: true };
+      }
+      return { status: res.status, data: await res.json() };
+    } catch (e) {
+      return { asleep: true };
+    }
+  }
+
+  async function waitForServer(base, maxMs) {
+    var until = Date.now() + maxMs;
+    while (Date.now() < until) {
+      try {
+        var h = await fetch(apiUrl(base, 'health'), { cache: 'no-store' });
+        if (h.ok) return true;
+      } catch (e) {}
+      await new Promise(function (r) { setTimeout(r, 3000); });
+    }
+    return false;
+  }
+
   async function run() {
     if (busy) return;
     var url = $('url').value.trim();
@@ -283,17 +312,21 @@ details.adv input { margin-top:8px; }
     store('vs_key', $('key').value);
     store('vs_base', base === DEFAULT_SERVER ? '' : base);
     server = base;
-    try {
-      var qs = 'url=' + encodeURIComponent(url) + '&depth=' + ($('depth').checked ? 1 : 0) + '&all=' + ($('all').checked ? 1 : 0);
-      var res = await fetch((base ? base + '/' : '') + 'api/scrape?' + qs, { headers: $('key').value ? { 'x-key': $('key').value } : {} });
-      var data = await res.json();
-      if (!data.ok) {
-        if (res.status === 401) $('adv').open = true;
-        show(el('div', 'err', data.error || 'שגיאה לא ידועה'));
-      } else renderResult(data);
-    } catch (e) {
-      show(el('div', 'err', 'לא הצלחתי להתחבר לשרת. בדוק חיבור ונסה שוב.'));
+    var qs = 'url=' + encodeURIComponent(url) + '&depth=' + ($('depth').checked ? 1 : 0) + '&all=' + ($('all').checked ? 1 : 0);
+    var r = await scrapeOnce(base, qs);
+    // השרת החינמי ב-Render נרדם אחרי זמן בלי שימוש; בזמן שהוא מתעורר הבקשה נכשלת – מחכים לו ומנסים שוב
+    if (r.asleep) {
+      show(el('div', 'loading', 'השרת היה במצב שינה ומתעורר עכשיו. זה לוקח עד דקה…'));
+      if (await waitForServer(base, 75000)) {
+        show(el('div', 'loading', 'השרת התעורר. מוריד את הדף ומחפש וידאו…'));
+        r = await scrapeOnce(base, qs);
+      }
     }
+    if (r.asleep) show(el('div', 'err', 'לא הצלחתי להתחבר לשרת. בדוק את החיבור לאינטרנט ונסה שוב בעוד דקה.'));
+    else if (!r.data.ok) {
+      if (r.status === 401) $('adv').open = true;
+      show(el('div', 'err', r.data.error || 'שגיאה לא ידועה'));
+    } else renderResult(r.data);
     busy = false; $('run').disabled = false; $('run').textContent = 'חלץ סרטון';
   }
 
@@ -304,6 +337,11 @@ details.adv input { margin-top:8px; }
       navigator.clipboard.readText().then(function (t) { $('url').value = t.trim(); toast('הודבק'); }, function () { toast('אין הרשאה ללוח – הדבק ידנית'); $('url').focus(); });
     } else { toast('הדבק ידנית'); $('url').focus(); }
   });
+
+  // מעיר את השרת כבר כשהדף נפתח, כדי שיהיה מוכן עד שמדביקים כתובת
+  var startBase = $('base').value.trim().replace(/\/+$/, '');
+  if (startBase && !/^https?:\/\//i.test(startBase)) startBase = 'https://' + startBase;
+  if (startBase) fetch(apiUrl(startBase, 'health'), { cache: 'no-store' }).catch(function () {});
 
   // תמיכה בקישור ישיר: /?url=...
   var q = new URLSearchParams(location.search).get('url');

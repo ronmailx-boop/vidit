@@ -17,6 +17,7 @@
 - [x] אימות הורדה בטלפון (mako: הקובץ נשמר ומתנגן)
 - [x] אייקון (וריאציה 1: נגן וקישור) – `icons/` + `manifest.webmanifest` + favicon/apple-touch-icon; Render מגיש אותם מרשימה סגורה
 - [x] אייקון ב-apps.vplusstudio.app (ריפו my-site, אומת בטלפון): נשלף אוטומטית מה-manifest ב-GitHub Pages; האריח מפנה ל-vidit.vplusstudio.app
+- [x] שרת רדום (Render חינמי נרדם אחרי ~15 דק'): הממשק מעיר אותו כשהדף נפתח, ואם בקשה נופלת בזמן ההתעוררות – מציג "השרת מתעורר…", מחכה ל-/health ומנסה שוב (דווח בכתבת mako ארוכה, 57 דק')
 - [x] `CORS_ORIGIN` תומך בכמה כתובות מופרדות בפסיק
 - [x] מיזוג ל-main (PR #1)
 - [x] Secret `CLOUDFLARE_API_TOKEN` בריפו

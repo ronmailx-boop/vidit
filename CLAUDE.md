@@ -409,3 +409,245 @@ fastlane/metadata/android/
 
 ### Definition of done
 Workflow green, draft release visible in Internal testing with the right versionCode, listing and images present for each locale, and the owner told what remains manual.
+
+﻿## Publishing generated videos to this YouTube channel from GitHub (universal instructions)
+
+
+### Goal and division of work
+- Goal: a GitHub Actions workflow uploads generated videos (committed to the repo, or produced during the run) to the owner's YouTube channel through the official YouTube Data API v3 (`videos.insert`), with title/description/tags/privacy from a small sidecar file per video. Videos default to **unlisted** (link-only); the owner (Ron) reviews them in YouTube Studio and sets them public manually. NEVER upload as public unless the sidecar or the owner says so.
+- The owner works only from the Claude Code Android app (cloud GitHub sessions, no PC). Do all file work in the repo, commit to a branch, and open a PR or push as he prefers. You cannot read or set GitHub secrets. Tell the owner exactly which secrets to add and where; never ask for secret values in chat.
+- No skill needs to be installed. The upload runs on the GitHub runner, either with the `yutu` GitHub Action or with a small Python script based on Google's official sample (both below). Never use Composio's YouTube upload tool: its `YOUTUBE_UPLOAD_VIDEO` has a reported bug where the file bytes never reach YouTube and the video is deleted within seconds (https://github.com/ComposioHQ/composio/issues/2954 and https://github.com/ComposioHQ/composio/issues/3547).
+
+
+### Step 0: Discover, do not assume
+Before writing anything, inspect the repo and fill these values. Ask the owner only for what cannot be found:
+- Which Google account owns the target YouTube channel. The OAuth login below must use THAT account, which is not necessarily his default Gmail. If the channel is a Brand Account, sign in with the account that manages it and pick the brand channel during consent.
+- `VIDEO_DIR` (folder where finished videos land, default `videos/`), the video formats (`.mp4` / `.mov` / `.webm`), and typical file size.
+- Where videos come from: committed to git, tracked with Git LFS, downloaded from his video-generation site during the run, or generated inside the workflow. If a generator produces them, prefer generating or downloading in the workflow instead of committing large files.
+- Default metadata: `categoryId` (22 = People & Blogs), default privacy (start with `unlisted`), and `madeForKids`. His growing-up videos show children: ask the owner whether they count as made for kids (COPPA); a wrong answer can get the channel penalized.
+Write the discovered values at the top of `scripts/README-youtube.md` so later sessions do not re-discover them.
+
+
+### One-time manual setup by the owner (about 20 minutes, all in a browser, works on his phone)
+1. Google Cloud Console (console.cloud.google.com): create a project (any name, e.g. `vplus-youtube-upload`).
+2. APIs & Services > Library: enable **YouTube Data API v3**.
+3. APIs & Services > OAuth consent screen: user type External, fill in app name and support email, add the scope `https://www.googleapis.com/auth/youtube.upload`. Then set publishing status to **In production** (Publishing status > Publish app). With status "Testing" the refresh token expires after 7 days and uploads break weekly (https://developers.google.com/identity/protocols/oauth2#expiration, "Refresh token expiration"). Do NOT submit the app for verification; an "unverified app" warning during consent is fine for his own channel.
+4. APIs & Services > Credentials > Create Credentials > OAuth client ID: application type "Web application", and add the authorized redirect URI `https://developers.google.com/oauthplayground`. Keep the client ID and client secret.
+5. Get the refresh token once: open https://developers.google.com/oauthplayground, click the gear icon, check "Use your own OAuth credentials", paste the client ID and secret. In Step 1 type the scope `https://www.googleapis.com/auth/youtube.upload`, click "Authorize APIs", sign in with the Google account that owns the channel, and on the warning screen choose Advanced > continue. In Step 2 click "Exchange authorization code for tokens" and copy the **refresh token**.
+6. Add the repo secrets below (GitHub repo > Settings > Secrets and variables > Actions).
+Phone note: some Google Cloud Console pages are cramped on a phone. Landscape orientation or the browser's "Desktop site" toggle helps.
+
+
+### GitHub repo secrets (owner adds, per repo)
+- `YOUTUBE_CLIENT_ID` and `YOUTUBE_CLIENT_SECRET`: from the OAuth client in step 4.
+- `YOUTUBE_REFRESH_TOKEN`: from step 5.
+- Only if using the yutu-action variant instead of the Python script: `YOUTUBE_CREDENTIAL` (the downloaded `client_secret.json`, base64-encoded) and `YOUTUBE_TOKEN` (a JSON holding the playground tokens, base64-encoded). See the variant section for the exact file shapes.
+Never print secrets in logs. Never commit `client_secret*.json`, `*.token.json` or `.env`; add them to `.gitignore`. The refresh token gives permanent upload access to the channel: treat it like a password. If it ever leaks, revoke it at https://myaccount.google.com/permissions and create a new one.
+
+
+### Sidecar metadata format
+For each video `videos/<name>.mp4` put an optional `videos/<name>.json` next to it:
+```json
+{
+  "title": "Adam growing up, 2015-2026",
+  "description": "Made with Vplus Studio",
+  "tags": ["growing up", "birthday"],
+  "categoryId": "22",
+  "privacyStatus": "unlisted",
+  "madeForKids": false,
+  "publishAt": "2026-11-20T16:00:00Z"
+}
+```
+All fields are optional. Defaults: `title` = the file name, `description` = empty, `tags` = none, `categoryId` = "22", `privacyStatus` = "unlisted" (the owner publishes manually; set "public" to publish immediately, or "private" to keep it hidden), `madeForKids` = false. `publishAt` schedules the video: it requires `privacyStatus: "private"` and a future RFC 3339 timestamp, and YouTube publishes automatically at that time.
+
+
+### Files to create
+`scripts/upload_video.py` (adapted from Google's official sample https://github.com/youtube/api-samples/blob/master/python/upload_video.py):
+```python
+#!/usr/bin/env python3
+"""Upload one video to YouTube using a stored OAuth refresh token.
+Required env vars: YOUTUBE_CLIENT_ID, YOUTUBE_CLIENT_SECRET, YOUTUBE_REFRESH_TOKEN
+Usage: python scripts/upload_video.py --file videos/clip.mp4 [--meta videos/clip.json]
+"""
+import argparse, json, os, sys, time
+import httplib2
+from google.oauth2.credentials import Credentials
+from googleapiclient.discovery import build
+from googleapiclient.errors import HttpError
+from googleapiclient.http import MediaFileUpload
+
+
+SCOPES = ["https://www.googleapis.com/auth/youtube.upload"]
+RETRIABLE_STATUS_CODES = [500, 502, 503, 504]
+RETRIABLE_EXCEPTIONS = (httplib2.HttpLib2Error, IOError)
+MAX_RETRIES = 10
+
+
+def get_youtube():
+    creds = Credentials(
+        token=None,
+        refresh_token=os.environ["YOUTUBE_REFRESH_TOKEN"],
+        token_uri="https://oauth2.googleapis.com/token",
+        client_id=os.environ["YOUTUBE_CLIENT_ID"],
+        client_secret=os.environ["YOUTUBE_CLIENT_SECRET"],
+        scopes=SCOPES,
+    )
+    return build("youtube", "v3", credentials=creds, cache_discovery=False)
+
+
+def resumable_upload(request):
+    response, error, retry = None, None, 0
+    while response is None:
+        try:
+            print("Uploading file...")
+            _, response = request.next_chunk()
+            if response is not None and "id" in response:
+                print(f"Video id '{response['id']}' was successfully uploaded.")
+                return response["id"]
+        except HttpError as e:
+            if e.resp.status in RETRIABLE_STATUS_CODES:
+                error = f"Retriable HTTP error {e.resp.status}: {e.content}"
+            else:
+                raise
+        except RETRIABLE_EXCEPTIONS as e:
+            error = f"Retriable error: {e}"
+        if error:
+            print(error)
+            retry += 1
+            if retry > MAX_RETRIES:
+                sys.exit("No longer attempting to retry.")
+            time.sleep(2 ** retry)
+
+
+def main():
+    p = argparse.ArgumentParser()
+    p.add_argument("--file", required=True)
+    p.add_argument("--meta", default=None)
+    a = p.parse_args()
+    meta = {}
+    if a.meta and os.path.exists(a.meta):
+        meta = json.load(open(a.meta))
+    status = {
+        "privacyStatus": meta.get("privacyStatus", "unlisted"),
+        "selfDeclaredMadeForKids": bool(meta.get("madeForKids", False)),
+    }
+    if meta.get("publishAt"):
+        status["publishAt"] = meta["publishAt"]
+        status["privacyStatus"] = "private"  # publishAt requires private
+    body = {
+        "snippet": {
+            "title": meta.get("title") or os.path.splitext(os.path.basename(a.file))[0],
+            "description": meta.get("description", ""),
+            "tags": meta.get("tags", []),
+            "categoryId": str(meta.get("categoryId", "22")),
+        },
+        "status": status,
+    }
+    youtube = get_youtube()
+    request = youtube.videos().insert(
+        part="snippet,status",
+        body=body,
+        media_body=MediaFileUpload(a.file, chunksize=-1, resumable=True),
+    )
+    video_id = resumable_upload(request)
+    print(f"https://www.youtube.com/watch?v={video_id}")
+
+
+if __name__ == "__main__":
+    main()
+```
+
+
+`.github/workflows/youtube-upload.yml`:
+```yaml
+name: Upload videos to YouTube
+on:
+  workflow_dispatch:
+    inputs:
+      file:
+        description: "Repo path to one video (empty = every un-uploaded video in videos/)"
+        default: ""
+  push:
+    paths: ["videos/**"]
+permissions:
+  contents: write   # the workflow commits an .uploaded marker per video
+jobs:
+  upload:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+        with: { lfs: true }   # harmless if LFS is unused; required if videos use Git LFS
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install google-api-python-client google-auth httplib2
+      - name: Upload new videos
+        env:
+          YOUTUBE_CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
+          YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
+          YOUTUBE_REFRESH_TOKEN: ${{ secrets.YOUTUBE_REFRESH_TOKEN }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          only="${{ inputs.file }}"
+          for f in videos/*.mp4 videos/*.mov videos/*.webm; do
+            if [ -n "$only" ] && [ "$f" != "$only" ]; then continue; fi
+            marker="$f.uploaded"
+            if [ -f "$marker" ]; then echo "skip $f (already uploaded)"; continue; fi
+            meta="${f%.*}.json"; [ -f "$meta" ] || meta=""
+            python scripts/upload_video.py --file "$f" ${meta:+--meta "$meta"} | tee upload.log
+            url=$(grep -o 'https://www.youtube.com/watch?v=[A-Za-z0-9_-]*' upload.log | tail -1)
+            echo "$url" > "$marker"
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git add "$marker"
+            git commit -m "Mark $f uploaded ($url)"
+            git push
+          done
+```
+
+
+Alternative for a single file, no Python: the `yutu` GitHub Action (https://github.com/eat-pray-ai/youtube-uploader, CLI repo https://github.com/eat-pray-ai/yutu):
+```yaml
+      - name: Upload video
+        uses: eat-pray-ai/youtube-uploader@main
+        with:
+          credential: ${{ secrets.YOUTUBE_CREDENTIAL }}  # base64 of client_secret.json
+          token: ${{ secrets.YOUTUBE_TOKEN }}            # base64 of youtube.token.json
+          file: "./videos/clip.mp4"
+          title: "Adam growing up"
+          desc: "Made with Vplus Studio"
+          tags: "growing up,birthday"
+          rest-flags: "-p unlisted -g 22"   # -p privacy, -g categoryId, -y playlistId, -u thumbnail, -k forKids
+```
+- `client_secret.json` is downloaded in setup step 4 and base64-encoded (`base64 -w0 client_secret.json`).
+- `youtube.token.json` shape: `{"access_token": "...", "token_type": "Bearer", "refresh_token": "...", "expiry": "2020-01-01T00:00:00Z"}` built from the OAuth playground tokens (an expired `expiry` just forces a refresh), then base64-encoded the same way.
+- Pin the yutu version with `version:` (for example `v0.9.5`) if a newer release ever misbehaves; empty means latest.
+
+
+### Run it
+1. Commit a video plus its optional sidecar to `videos/` and push, or run the workflow manually with a `file` input.
+2. Check the run log for the `https://www.youtube.com/watch?v=...` line, then YouTube Studio > Content for the video (private by default).
+3. In your reply to the owner give the Actions run link and the video link, and say what remains manual (review and set Public in Studio, or schedule via `publishAt`). Do not claim it is public.
+
+
+### Quota, privacy and the audit
+- Default quota: 100 `videos.insert` calls per day, plus 10,000 units per day for the other endpoints; usage resets at midnight Pacific Time and shows on the Quotas page of the Google Cloud project (https://developers.google.com/youtube/v3/determine_quota_cost). Plenty for his volume. More quota requires passing YouTube's audit: https://developers.google.com/youtube/v3/guides/quota_and_compliance_audits.
+- Privacy: `videos.insert` defaults to public, so the workflow and sidecar always set a privacy value explicitly, defaulting to unlisted. Note: uploads from unaudited API projects used to be forced to private; Google's current reference says they are NOT restricted anymore (https://developers.google.com/youtube/v3/docs/videos/insert, checked 2026-11-06). Either way this workflow defaults to unlisted so no video goes public without the owner; if uploads ever come out locked to private, the restriction is back: publish from YouTube Studio or request the audit above.
+- `madeForKids` must be truthful (COPPA). Made-for-kids videos lose comments, notifications and some other features; a wrong setting can get the channel penalized.
+
+
+### Known pitfalls and fixes
+- `invalid_grant` when refreshing: the refresh token expired or was revoked. Causes: consent screen still in "Testing" (7-day expiry), the Google password changed, or access revoked at myaccount.google.com/permissions. Fix: redo setup step 5, update `YOUTUBE_REFRESH_TOKEN`, and make sure the app is In production.
+- "Google hasn't verified this app" warning during consent: expected for an unverified personal app; choose Advanced > continue. Removing the warning requires Google verification, not needed for his own channel.
+- Push rejected because a file exceeds 100 MiB (25 MiB via web upload): GitHub's limits (https://docs.github.com/en/repositories/working-with-files/managing-large-files/about-large-files-on-github). Fixes: track videos with Git LFS (`git lfs track "videos/*.mp4"`; the workflow already checks out with `lfs: true`), attach them to a GitHub Release and download them in the run, or generate/download them inside the workflow instead of committing them.
+- `quotaExceeded` / `uploadLimitExceeded`: daily cap hit (100 uploads/day, resets midnight PT) or the channel's own upload limit. Wait, or request more quota through the audit form.
+- Upload stalls or `HttpError 500/502/503/504`: the script retries with exponential backoff; for large files also keep `timeout-minutes` generous.
+- `publishAt` rejected: it requires `privacyStatus: "private"` and a future RFC 3339 timestamp.
+- Metadata not applied: the sidecar must sit next to the video with the same base name (`videos/foo.mp4` + `videos/foo.json`).
+- Secrets: a missing secret fails the step on authentication with an empty value. Tell the owner the exact secret name to add; do not ask him to paste it in chat.
+- Never use Composio for the upload (silent-deletion bug, see above). Only the yutu action or the Python script.
+
+
+### Definition of done
+Workflow green, the video visible in YouTube Studio with the right title, description, tags and privacy, and the owner told what remains manual (review, set public, or schedule via `publishAt`).

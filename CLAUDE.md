@@ -209,3 +209,203 @@ Domains & Routes → ליד `workers.dev` → Disable. **אזהרה:** בלי
 - כתובת חדשה = origin חדש: נתונים מקומיים (localStorage / IndexedDB) והתקנת PWA **לא עוברים**. לחבר את הדומיין לפני שמשווקים; באפליקציה קיימת עם משתמשים — להזהיר את המשתמש לפני שמפנים אליה.
 - Firebase Auth / OAuth: להוסיף את הדומיין החדש ל-Authorized domains (אחרת ההתחברות תיכשל בכתובת החדשה).
 - לעדכן את הכתובת ב-README, ב-PROJECT_STATE.md, וב-manifest / מסמכים משפטיים אם היא מופיעה בהם.
+
+﻿## Publishing this Android app to Google Play (universal instructions)
+
+
+### Owner account type (read first)
+- The owner (Ron) publishes with a Google Play **organization** developer account (brand: Vplus Studio). Account-type-dependent rules:
+  - The closed-test requirement (at least 12 testers opted in continuously for 14 days before applying for production access) applies ONLY to **personal** developer accounts created after Nov 13, 2023. Organization accounts have NO testing requirement before production. Source: https://support.google.com/googleplay/android-developer/answer/14151465
+  - Exception: if a specific app was originally created under a personal account and later transferred to the organization account, the testing requirement can stay attached to that app. Check that app's Play Console Dashboard for "Apply for production" before assuming it is exempt.
+  - The Android-device verification via the Play Console mobile app is also a personal-account-only requirement.
+- Do NOT tell the owner to recruit 12 testers or wait 14 days for production access. Internal testing below is optional QA, not a Google requirement for his account type.
+
+
+### Goal and division of work
+- Goal: a GitHub Actions workflow builds a signed AAB and uses fastlane `supply` (`upload_to_play_store`) to upload the AAB, store listing text and images to the **Internal testing** track as a **draft** release. The owner (Ron) reviews it in Play Console and presses publish/promote manually. NEVER try to publish to production or promote tracks automatically.
+- The owner works only from the Claude Code Android app (cloud GitHub sessions, no PC). Do all file work in the repo, commit to a branch, and open a PR or push as the owner prefers. You cannot read or set GitHub secrets. Tell the owner exactly which secrets to add and where; never ask for secret values in chat.
+- No skill needs to be installed. Everything uses standard tools on the GitHub runner (Ruby, fastlane, Java, Android SDK/Gradle or Node).
+
+
+### Step 0: Discover, do not assume
+Before writing anything, inspect the repo and fill these values. Ask the owner only for what cannot be found:
+- `PACKAGE_NAME` (applicationId): look in `app/build.gradle(.kts)`, `android/app/build.gradle`, `capacitor.config.*` (appId), or `twa-manifest.json` (packageId). It must match the Play Console app exactly. Package names are unique and permanent once the app is created.
+- `APP_KIND`: native Gradle project, Capacitor/Cordova, or a PWA wrapped as TWA (Bubblewrap / PWABuilder). The owner's apps are mostly PWAs, so an Android wrapper is usually needed. If there is no Android project yet, create one (Bubblewrap `init`/`build` or Capacitor `add android`) and commit it.
+- `ANDROID_DIR` (folder containing `gradlew`) and the expected AAB output path (usually `<ANDROID_DIR>/app/build/outputs/bundle/release/app-release.aab`).
+- `APP_NAME`, supported locales (default `he-IL` and `en-US`), and whether `fastlane/` already exists.
+Write the discovered values at the top of `fastlane/README-publish.md` so later sessions do not re-discover them.
+
+
+### One-time manual steps per app (the owner does these, you remind him)
+1. Create the app in Play Console (name, package name, default language, app or game, free or paid, accept the Developer Program Policies / US export laws declarations and the Play App Signing Terms of Service). Package name is fixed forever after app creation.
+2. Build the first AAB (run the workflow with `upload=false`, download the artifact) and upload it manually once to Internal testing. fastlane cannot create the app or do the first upload: Google requires the app to exist with at least one manually uploaded build before the API works.
+3. Complete the required Play Console forms: privacy policy URL, app access, ads declaration, content rating, target audience, data safety, and app category. The API does not do these.
+4. Add testers (an email list) to the Internal testing track (up to 100 testers on Internal).
+Testing requirement note: the closed-test rule (12 testers opted in continuously for 14 days, then "Apply for production", review ~7 days) applies only to PERSONAL developer accounts created after Nov 13, 2023. The owner's account is an ORGANIZATION account, so it does NOT apply; he can publish to production without a closed test (https://support.google.com/googleplay/android-developer/answer/14151465). Only exception: an app that started under a personal account and was transferred - check that app's Dashboard.
+
+
+### One-time setup per developer account (shared by all apps)
+1. Google Cloud Console: create or pick a project, enable the **Google Play Android Developer API** (fastlane's docs call it "Google Play Developer API"), create a **service account**, and create a JSON key for it (Actions > Manage keys > Add key > Create new key > JSON). No IAM roles are needed on the service account itself.
+2. Play Console > Users and permissions > Invite new users: paste the service account email, and grant these permissions (exact names in Play Console):
+   - "Release apps to testing tracks" (create, edit and roll out releases on internal/closed/open tracks)
+   - "Manage store presence" (store listing text and graphics)
+   - "View app information and download bulk reports (read-only)" (account level; the app-level equivalent is "View app information (read-only)")
+   Grant them as account permissions to cover all current and future apps. Do NOT grant "Release to production, exclude devices, and use Play App Signing" - the owner publishes manually.
+3. Accept all pending agreements in Play Console (see TOS_NOT_ACCEPTED below).
+4. Permissions are not instant: usually minutes, occasionally up to ~24 hours (sometimes more). On a 403 right after granting, wait and retry before changing anything.
+5. Optional connection test, run anywhere with Ruby: `fastlane run validate_play_store_json_key json_key:/path/to/key.json`.
+Do not ask for the JSON in chat. The owner pastes the entire file contents into the repo secret.
+
+
+### GitHub repo secrets (owner adds, per repo)
+- `PLAY_SERVICE_ACCOUNT_JSON`: full JSON key text.
+- `ANDROID_KEYSTORE_BASE64`: upload keystore, base64 (`base64 -w0 upload.jks`; create it with `keytool -genkeypair` on any machine or in a one-off Actions run, and have the owner store it safely; losing it requires a Play "upload key reset"). Keep a private backup of the keystore outside GitHub.
+- `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, `ANDROID_KEY_PASSWORD`.
+- Use Play App Signing (required for new apps; its Terms of Service are accepted when creating the app). The keystore here is only the upload key.
+Never print secrets in logs. Never commit keystores, JSON keys or `.env`. Add them to `.gitignore`.
+
+
+### Files to create
+`Gemfile`:
+```
+source "https://rubygems.org"
+gem "fastlane"
+```
+`fastlane/Appfile`:
+```
+package_name(ENV["PACKAGE_NAME"] || "REPLACE_WITH_PACKAGE_NAME")
+```
+`fastlane/Fastfile`:
+```ruby
+default_platform(:android)
+
+
+platform :android do
+  desc "Upload AAB + store listing to Internal testing as a DRAFT"
+  lane :internal do
+    upload_to_play_store(
+      package_name: ENV["PACKAGE_NAME"],
+      json_key_data: ENV["PLAY_SERVICE_ACCOUNT_JSON"],
+      track: "internal",
+      release_status: "draft",          # always draft: the owner presses publish
+      aab: ENV["AAB_PATH"],
+      skip_upload_apk: true,
+      metadata_path: "fastlane/metadata/android",
+      skip_upload_metadata: ENV["SKIP_METADATA"] == "true",
+      skip_upload_images: ENV["SKIP_IMAGES"] == "true",
+      skip_upload_screenshots: ENV["SKIP_IMAGES"] == "true",
+      skip_upload_changelogs: false,
+      timeout: 600                       # default is 300s; large AABs can still exceed it
+    )
+  end
+
+
+  desc "Listing/images only, no new build"
+  lane :listing do
+    upload_to_play_store(
+      package_name: ENV["PACKAGE_NAME"],
+      json_key_data: ENV["PLAY_SERVICE_ACCOUNT_JSON"],
+      track: "internal",
+      skip_upload_aab: true,
+      skip_upload_apk: true,
+      skip_upload_changelogs: true,
+      metadata_path: "fastlane/metadata/android",
+      timeout: 600
+    )
+  end
+end
+```
+`.github/workflows/play-internal.yml` (adapt the build step to `APP_KIND`):
+```yaml
+name: Play internal upload
+on:
+  workflow_dispatch:
+    inputs:
+      upload:
+        description: "Upload to Play (false = only build the AAB artifact)"
+        default: "true"
+      listing_only:
+        description: "Only upload listing and images"
+        default: "false"
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      PACKAGE_NAME: REPLACE_WITH_PACKAGE_NAME
+      ANDROID_DIR: android          # folder with gradlew
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: "17" }
+      - uses: ruby/setup-ruby@v1
+        with: { ruby-version: "3.2", bundler-cache: true }
+      # If APP_KIND is Capacitor/PWA wrapper, add actions/setup-node and the web build + `npx cap sync android` here.
+      - name: Restore keystore
+        run: echo "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" | base64 -d > "$RUNNER_TEMP/upload.jks"
+      - name: Build signed AAB
+        working-directory: ${{ env.ANDROID_DIR }}
+        env:
+          KEYSTORE_PATH: ${{ runner.temp }}/upload.jks
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: ./gradlew bundleRelease
+      - uses: actions/upload-artifact@v4
+        with:
+          name: aab
+          path: ${{ env.ANDROID_DIR }}/app/build/outputs/bundle/release/*.aab
+      - name: Upload to Play (Internal, draft)
+        if: ${{ inputs.upload == 'true' }}
+        env:
+          PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
+          AAB_PATH: ${{ env.ANDROID_DIR }}/app/build/outputs/bundle/release/app-release.aab
+        run: |
+          if [ "${{ inputs.listing_only }}" = "true" ]; then bundle exec fastlane android listing
+          else bundle exec fastlane android internal; fi
+```
+The Gradle `signingConfigs.release` must read `KEYSTORE_PATH`, `KEYSTORE_PASSWORD`, `KEY_ALIAS`, `KEY_PASSWORD` from environment variables. Add that if missing. `versionCode` must increase on every upload (and stay below 2100000000): derive it from `GITHUB_RUN_NUMBER` (offset above any previously uploaded code) or bump it in the repo. `targetSdk` must meet Google Play's current target API level requirement; check it when the build is rejected.
+
+
+### Store listing metadata layout
+```
+fastlane/metadata/android/
+  he-IL/
+    title.txt               (max 30 chars)
+    short_description.txt   (max 80 chars)
+    full_description.txt    (max 4000 chars)
+    changelogs/<versionCode>.txt   (max 500 chars per language; or default.txt)
+    images/
+      icon.png              (512x512, 32-bit PNG with alpha, max 1024 KB)
+      featureGraphic.png    (1024x500, JPEG or 24-bit PNG, no alpha)
+      phoneScreenshots/1.png ... 8.png   (min 2, up to 8 per device type; JPEG or 24-bit PNG, no alpha; each side 320-3840 px; long side at most 2x the short side)
+  en-US/
+    (same structure)
+```
+- Locale folder names must match Play's codes exactly: `he-IL`, `en-US` (both are supported by supply). The language must also be added in Play Console (Grow users > Store presence > Store listings > translations) before it can be uploaded, otherwise supply errors on an unknown language.
+- Write the Hebrew text natively, no machine-sounding translation, plain text, no markdown. Keep the app name consistent across locales.
+- Generate screenshots from the real app (headless Chromium/Playwright against the PWA at a phone viewport such as 1080x1920 is fine) and commit them. Do not invent features in descriptions. Ask the owner to approve the descriptions before the first upload.
+
+
+### Run it
+1. Owner: GitHub app/web > Actions > "Play internal upload" > Run workflow. First time use `upload=false`.
+2. After the manual first upload exists in Play Console, run with `upload=true`. Check Play Console > Test and release > Testing > Internal testing for the new draft release, review, then press "Send for review/Publish" manually.
+3. In your reply to the owner, give the Actions run link and say what changed. Do not claim it is published; it is a draft awaiting him.
+
+
+### Known pitfalls and fixes
+- **Timeout on large AAB** (`Net::ReadTimeout`, `execution expired`): keep `timeout: 600` (or higher) in `upload_to_play_store` (the parameter default is 300 seconds). Re-run; also try `ENV["SUPPLY_UPLOAD_MAX_RETRIES"]="3"` (retries failed Google API calls; supported since September 2023 fastlane releases).
+- **TOS_NOT_ACCEPTED** (or "Please accept the latest agreement"): the developer account owner must open Play Console and accept the pending Developer Distribution Agreement / terms. Not fixable from code. Then re-run.
+- **Credential errors**: "Google Api Error: forbidden / The caller does not have permission": the service account was not invited in Play Console Users and permissions, lacks the permissions above, or the grant has not propagated yet (wait and retry; it can take up to ~24 hours). "Invalid JSON key"/parse errors: the secret was pasted truncated or wrapped; re-paste the whole file. "Google Play Android Developer API has not been used": enable the API in the Google Cloud project of the service account. Test the key anytime with `fastlane run validate_play_store_json_key json_key:...`.
+- **"Package not found" / "Application not found"**: package name mismatch, app not created in Play Console, or the first AAB was not uploaded manually yet (the API cannot make the first upload).
+- **"Only releases with status draft may be created on draft app"**: the app has never been published. Keep `release_status: "draft"` (already the default here).
+- **"Version code N has already been used"**: raise `versionCode`.
+- **Signature errors** ("signed with the wrong key"): the keystore secret is not the upload key registered in Play. Use the original keystore, or ask Google for an upload key reset.
+- **Ruby on the runner**: always use `ruby/setup-ruby@v1` with `bundler-cache: true` and run `bundle exec fastlane`. Never use the system Ruby or `gem install` without Bundler. If bundler complains about the lockfile platform, run `bundle lock --add-platform x86_64-linux` and commit `Gemfile.lock`.
+- **Image rejected**: wrong size, alpha channel on screenshots or feature graphic (only the icon may have alpha), or fewer than 2 phone screenshots. Fix the files and re-run the `listing` lane.
+- **Changelog rejected** ("The release notes for language 'xx-XX' are too long. Limit is 500 characters."): trim the changelog file for every locale; the limit applies per language and one over-limit locale fails the whole upload.
+- **Secrets**: if a secret is missing the step fails with an empty value. Tell the owner the exact secret name to add; do not ask him to paste it in chat.
+
+
+### Definition of done
+Workflow green, draft release visible in Internal testing with the right versionCode, listing and images present for each locale, and the owner told what remains manual.
